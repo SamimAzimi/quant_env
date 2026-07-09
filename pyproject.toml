@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-env"
+version = "0.1.0"
+description = "Framework to analyze and profile market behavior across timeframes, backtest strategies, and visualize results"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+    "scikit-learn",
+    "matplotlib",
+    "pyarrow",
+    "python-dotenv",
+]
+
+[project.optional-dependencies]
+# downloading market data (libs/data_manager.py)
+data = ["vectorbt", "yfinance", "requests"]
+# interactive dashboards (libs/dashboard.py, libs/tv_chart.py)
+dashboard = ["streamlit", "altair", "plotly"]
+# telegram forwarder (tools/telegram_forwarder.py)
+telegram = ["telethon"]
+dev = ["pytest", "jupyter"]
+
+[tool.setuptools]
+packages = ["libs", "config", "strategies"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
