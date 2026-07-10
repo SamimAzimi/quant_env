@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type AssetChart } from '../api';
+import { api, withParams, type AssetChart } from '../api';
 import CandleChart from '../components/CandleChart';
 
 interface ChartsResponse {
@@ -7,18 +7,23 @@ interface ChartsResponse {
   errors: Record<string, string>;
 }
 
+interface Props {
+  timeframes: string[];
+  date: string;   // '' = today
+}
+
 /** Yesterday's movement per asset with pre-day and session key levels. */
-export default function ChartsSection({ timeframes }: { timeframes: string[] }) {
+export default function ChartsSection({ timeframes, date }: Props) {
   const [tf, setTf] = useState('15m');
   const [data, setData] = useState<ChartsResponse | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
     setError('');
-    api.get<ChartsResponse>(`/api/stats/charts?tf=${tf}`)
+    api.get<ChartsResponse>(withParams('/api/stats/charts', { tf, date }))
       .then(setData)
       .catch((e) => setError(String(e)));
-  }, [tf]);
+  }, [tf, date]);
 
   return (
     <div className="card span-2">

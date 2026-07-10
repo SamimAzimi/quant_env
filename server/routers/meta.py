@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Asset, AssetCategory, Tag
-from ..schemas import AssetCategoryOut, AssetIn, AssetOut, TagIn, TagOut
+from ..models import Asset, AssetCategory, Country, Tag
+from ..schemas import (
+    AssetCategoryOut, AssetIn, AssetOut, CountryIn, CountryOut, TagIn, TagOut,
+)
 
 router = APIRouter(prefix="/api", tags=["meta"])
 
@@ -36,6 +38,23 @@ def list_effects(db: Session = Depends(get_db)):
         .order_by(AssetCategory.kind, AssetCategory.name)
         .all()
     )
+
+
+@router.get("/countries", response_model=list[CountryOut])
+def list_countries(db: Session = Depends(get_db)):
+    return db.query(Country).order_by(Country.name).all()
+
+
+@router.post("/countries", response_model=CountryOut, status_code=201)
+def create_country(payload: CountryIn, db: Session = Depends(get_db)):
+    name = payload.name.strip()
+    existing = db.query(Country).filter(Country.name == name).first()
+    if existing:
+        return existing
+    country = Country(name=name)
+    db.add(country)
+    db.commit()
+    return country
 
 
 @router.post("/effects", response_model=AssetOut, status_code=201)

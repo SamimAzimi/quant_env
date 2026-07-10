@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { api, type ReturnsSeries } from '../api';
+import { api, withParams, type ReturnsSeries } from '../api';
 import ReturnsChart, { SERIES_COLORS } from '../components/ReturnsChart';
 
 interface Props {
   timeframes: string[];
   available: string[];
   defaults: string[];
+  date: string;   // '' = today
 }
 
 /** Color-coded cumulative log returns across yesterday, multi-asset. */
-export default function PreDayStats({ timeframes, available, defaults }: Props) {
+export default function PreDayStats({ timeframes, available, defaults, date }: Props) {
   const [tf, setTf] = useState('15m');
   const [selected, setSelected] = useState<string[]>(defaults);
   const [series, setSeries] = useState<ReturnsSeries[]>([]);
@@ -21,10 +22,10 @@ export default function PreDayStats({ timeframes, available, defaults }: Props) 
     if (selected.length === 0) { setSeries([]); return; }
     setError('');
     api.get<{ series: ReturnsSeries[] }>(
-      `/api/stats/returns?tf=${tf}&assets=${selected.join(',')}`)
+      withParams('/api/stats/returns', { tf, assets: selected.join(','), date }))
       .then((r) => setSeries(r.series))
       .catch((e) => setError(String(e)));
-  }, [tf, selected]);
+  }, [tf, selected, date]);
 
   const toggle = (asset: string) =>
     setSelected((s) => (s.includes(asset) ? s.filter((a) => a !== asset) : [...s, asset]));

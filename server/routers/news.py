@@ -1,21 +1,17 @@
-"""News recording, Today News, the tomorrow-preview ticker, and To Watch."""
+"""News recording, day views (as-of aware), history, and To Watch."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from ..dates import as_of_or_today, day_bounds, range_bounds
 from ..db import get_db
 from ..models import Asset, News, Tag
 from ..schemas import NewsIn, NewsOut, NewsPatch
 
 router = APIRouter(prefix="/api/news", tags=["news"])
-
-
-def _utc_today() -> datetime:
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    return now.replace(hour=0, minute=0, second=0, microsecond=0)
 
 
 @router.post("", response_model=NewsOut, status_code=201)
@@ -31,28 +27,28 @@ def create_news(payload: NewsIn, db: Session = Depends(get_db)):
     return news
 
 
-@router.get("/today", response_model=list[NewsOut])
-def today_news(db: Session = Depends(get_db)):
-    """News recorded today (UTC) — the Today News section."""
-    start = _utc_today()
+def _on_day(db: Session, day: date) -> list[News]:
+    start, end = day_bounds(day)
     return (
         db.query(News)
-        .filter(News.created_at >= start)
+        .filter(News.created_at >= start, News.created_at < end)
         .order_by(News.created_at.desc())
         .all()
     )
+
+
+@router.get("/today", response_model=list[NewsOut])
+def today_news(date_: date | None = Query(None, alias="date"),
+               db: Session = Depends(get_db)):
+    """News recorded on the selected day (default: today, UTC)."""
+    return _on_day(db, as_of_or_today(date_))
 
 
 @router.get("/yesterday", response_model=list[NewsOut])
-def yesterday_news(db: Session = Depends(get_db)):
-    """News recorded the previous UTC day — the scroll preview strip."""
-    start = _utc_today() - timedelta(days=1)
-    return (
-        db.query(News)
-        .filter(News.created_at >= start, News.created_at < _utc_today())
-        .order_by(News.created_at.desc())
-        .all()
-    )
+def yesterday_news(date_: date | None = Query(None, alias="date"),
+                   db: Session = Depends(get_db)):
+    """News recorded the day before the selected day — the preview ticker."""
+    return _on_day(db, as_of_or_today(date_) - timedelta(days=1))
 
 
 @router.get("/watch", response_model=list[NewsOut])
@@ -64,6 +60,20 @@ def watch_list(db: Session = Depends(get_db)):
         .order_by(News.created_at.desc())
         .all()
     )
+
+
+@router.get("/history", response_model=list[NewsOut])
+def history(start: date | None = None, end: date | None = None,
+            tag_id: int | None = None, effect_id: int | None = None,
+            db: Session = Depends(get_db)):
+    """News over a date range, optionally filtered by tag and/or effect."""
+    s, e = range_bounds(start, end)
+    q = db.query(News).filter(News.created_at >= s, News.created_at < e)
+    if tag_id is not None:
+        q = q.filter(News.tags.any(Tag.id == tag_id))
+    if effect_id is not None:
+        q = q.filter(News.effects.any(Asset.id == effect_id))
+    return q.order_by(News.created_at.desc()).limit(500).all()
 
 
 @router.patch("/{news_id}", response_model=NewsOut)

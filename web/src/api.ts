@@ -10,16 +10,25 @@ export interface NewsItem {
   created_at: string; tags: Tag[]; effects: Asset[];
 }
 export interface Trade {
-  id: number; entry_time: string; exit_time: string | null;
+  id: number; asset_id: number | null; asset: Asset | null;
+  entry_time: string; exit_time: string | null;
+  entry_price: number | null; exit_price: number | null;
   entry_reason: string; exit_reason: string | null;
   tp: number | null; sl: number | null; remarks: string; created_at: string;
 }
+export interface Country { id: number; name: string }
 export interface Reading { id: number; ts: string; value: number }
 export interface Thought { id: number; ts: string; body: string }
 export interface EconReport {
-  id: number; name: string; forecast: string; previous: string;
+  id: number; name: string; country: Country | null;
+  forecast: string; previous: string;
   actual: string | null; outcome: 'beat' | 'miss' | 'inline' | null;
   created_at: string;
+}
+export interface RateProbHistory {
+  meeting_date: string | null;
+  buckets: string[];
+  series: { captured_at: string; probs: Record<string, number | null> }[];
 }
 export interface RateProb { meeting_date: string; bucket: string; probability: number }
 export interface RateSnapshot { id: number; captured_at: string; probs: RateProb[] }
@@ -51,3 +60,12 @@ export const api = {
   patch: <T>(url: string, body: unknown) =>
     request<T>(url, { method: 'PATCH', body: JSON.stringify(body) }),
 };
+
+/** Append query params, skipping empty values. */
+export function withParams(url: string, params: Record<string, string>): string {
+  const q = Object.entries(params)
+    .filter(([, v]) => v !== '')
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+    .join('&');
+  return q ? `${url}${url.includes('?') ? '&' : '?'}${q}` : url;
+}

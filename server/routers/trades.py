@@ -1,12 +1,13 @@
-"""Trade journal: record trades, list today/open trades, edit later."""
+"""Trade journal: record trades (with asset + prices), day view, history."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from ..dates import as_of_or_today, day_bounds, range_bounds, today_utc
 from ..db import get_db
 from ..models import Trade
 from ..schemas import TradeIn, TradeOut, TradePatch
@@ -26,8 +27,11 @@ def _naive_utc(dt: datetime | None) -> datetime | None:
 @router.post("", response_model=TradeOut, status_code=201)
 def create_trade(payload: TradeIn, db: Session = Depends(get_db)):
     trade = Trade(
+        asset_id=payload.asset_id,
         entry_time=_naive_utc(payload.entry_time),
         exit_time=_naive_utc(payload.exit_time),
+        entry_price=payload.entry_price,
+        exit_price=payload.exit_price,
         entry_reason=payload.entry_reason,
         exit_reason=payload.exit_reason,
         tp=payload.tp,
@@ -40,18 +44,34 @@ def create_trade(payload: TradeIn, db: Session = Depends(get_db)):
 
 
 @router.get("", response_model=list[TradeOut])
-def list_trades(db: Session = Depends(get_db)):
-    """Today's trades (recorded or entered today, UTC) plus any open trade."""
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+def list_trades(date_: date | None = Query(None, alias="date"),
+                db: Session = Depends(get_db)):
+    """Trades of the selected day (entered or recorded then).
+
+    When viewing today, still-open trades from earlier days are included
+    so nothing in flight ever drops off the page.
+    """
+    day = as_of_or_today(date_)
+    start, end = day_bounds(day)
+    cond = or_(
+        Trade.entry_time.between(start, end),
+        Trade.created_at.between(start, end),
+    )
+    if day == today_utc():
+        cond = or_(cond, Trade.exit_time.is_(None))
+    return db.query(Trade).filter(cond).order_by(Trade.entry_time.desc()).all()
+
+
+@router.get("/history", response_model=list[TradeOut])
+def history(start: date | None = None, end: date | None = None,
+            db: Session = Depends(get_db)):
+    """All trades whose entry falls in the date range (default: last 30d)."""
+    s, e = range_bounds(start, end)
     return (
         db.query(Trade)
-        .filter(or_(
-            Trade.exit_time.is_(None),
-            Trade.entry_time >= start,
-            Trade.created_at >= start,
-        ))
+        .filter(Trade.entry_time >= s, Trade.entry_time < e)
         .order_by(Trade.entry_time.desc())
+        .limit(1000)
         .all()
     )
 

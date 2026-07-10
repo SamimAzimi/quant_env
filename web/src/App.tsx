@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { NavLink, Route, Routes } from 'react-router-dom';
 import RecordOverlay from './components/RecordOverlay';
-import StatsPage from './pages/StatsPage';
+import HistoryPage from './pages/HistoryPage';
+import MarketPrepPage from './pages/MarketPrepPage';
 
-// New pages get added here as extra <Route> entries; the Record FAB lives
-// outside the router so it stays visible on every page.
+// New pages: add a <Route> plus a nav link. The Record FAB lives outside
+// the router so it stays visible on every page.
 export default function App() {
   const [recordOpen, setRecordOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -15,6 +16,10 @@ export default function App() {
     <>
       <header className="app-header">
         <h1>📈 Market Prep</h1>
+        <nav className="main-nav">
+          <NavLink to="/" end>Market Prep</NavLink>
+          <NavLink to="/history">History</NavLink>
+        </nav>
         <span className="date">
           {new Date().toLocaleDateString('en-GB', {
             weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
@@ -25,7 +30,8 @@ export default function App() {
       </header>
 
       <Routes>
-        <Route path="*" element={<StatsPage refreshKey={refreshKey} />} />
+        <Route path="/history" element={<HistoryPage />} />
+        <Route path="*" element={<MarketPrepPage refreshKey={refreshKey} />} />
       </Routes>
 
       <button className="fab" aria-label="Record" onClick={() => setRecordOpen(true)}>

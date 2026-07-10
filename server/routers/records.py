@@ -1,15 +1,16 @@
 """VIX, Fear & Greed, Analyze & Thoughts, and Economic Reports recording.
 
-The Stats page uses the strict previous-UTC-day rule: sentiment endpoints
-return readings whose timestamp fell on the previous calendar day (UTC).
+The Market Prep page uses the strict previous-day rule: sentiment endpoints
+return readings from the day before the selected date (default: today, UTC).
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from ..dates import as_of_or_today, day_bounds, range_bounds
 from ..db import get_db
 from ..models import EconReport, FearGreedReading, Thought, VixReading
 from ..schemas import (
@@ -32,17 +33,23 @@ def _naive_utc(dt: datetime | None) -> datetime:
     return dt.replace(tzinfo=None)
 
 
-def _prev_day_bounds() -> tuple[datetime, datetime]:
-    today = _now().replace(hour=0, minute=0, second=0, microsecond=0)
-    return today - timedelta(days=1), today
-
-
-def _prev_day(db: Session, model):
-    start, end = _prev_day_bounds()
+def _prev_day(db: Session, model, as_of: date | None):
+    start, end = day_bounds(as_of_or_today(as_of) - timedelta(days=1))
     return (
         db.query(model)
         .filter(model.ts >= start, model.ts < end)
         .order_by(model.ts.desc())
+        .all()
+    )
+
+
+def _range(db: Session, model, start: date | None, end: date | None):
+    s, e = range_bounds(start, end)
+    return (
+        db.query(model)
+        .filter(model.ts >= s, model.ts < e)
+        .order_by(model.ts.asc())
+        .limit(5000)
         .all()
     )
 
@@ -58,8 +65,16 @@ def record_vix(payload: ReadingIn, db: Session = Depends(get_db)):
 
 
 @router.get("/vix/previous-day", response_model=list[ReadingOut])
-def vix_previous_day(db: Session = Depends(get_db)):
-    return _prev_day(db, VixReading)
+def vix_previous_day(date_: date | None = Query(None, alias="date"),
+                     db: Session = Depends(get_db)):
+    return _prev_day(db, VixReading, date_)
+
+
+@router.get("/vix/history", response_model=list[ReadingOut])
+def vix_history(start: date | None = None, end: date | None = None,
+                db: Session = Depends(get_db)):
+    """All VIX readings in the range (default last 30d), oldest first."""
+    return _range(db, VixReading, start, end)
 
 
 # --- Fear & Greed ------------------------------------------------------------
@@ -75,8 +90,15 @@ def record_fear_greed(payload: ReadingIn, db: Session = Depends(get_db)):
 
 
 @router.get("/fear-greed/previous-day", response_model=list[ReadingOut])
-def fear_greed_previous_day(db: Session = Depends(get_db)):
-    return _prev_day(db, FearGreedReading)
+def fear_greed_previous_day(date_: date | None = Query(None, alias="date"),
+                            db: Session = Depends(get_db)):
+    return _prev_day(db, FearGreedReading, date_)
+
+
+@router.get("/fear-greed/history", response_model=list[ReadingOut])
+def fear_greed_history(start: date | None = None, end: date | None = None,
+                       db: Session = Depends(get_db)):
+    return _range(db, FearGreedReading, start, end)
 
 
 # --- Analyze & Thoughts -------------------------------------------------------

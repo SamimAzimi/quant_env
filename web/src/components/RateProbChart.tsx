@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { RateSnapshot } from '../api';
 
 interface Props {
@@ -5,13 +6,23 @@ interface Props {
   previous: RateSnapshot | null;
 }
 
+const TOP_N = 3;
+
 /**
  * Grouped horizontal bars: per meeting, probability by rate bucket.
- * Today's snapshot is solid; the previous day's shows as a hollow marker
- * so shifts in expectations are visible at a glance.
+ * Only the top three buckets show by default — "see more…" reveals the
+ * rest. The previous day's value appears as a marker on each bar.
  */
 export default function RateProbChart({ today, previous }: Props) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   if (!today) return <p className="muted">No rate table recorded yet. Use Record → FOMC.</p>;
+
+  const toggle = (meeting: string) =>
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (next.has(meeting)) next.delete(meeting); else next.add(meeting);
+      return next;
+    });
 
   const meetings = [...new Set(today.probs.map((p) => p.meeting_date))].sort();
   const prevMap = new Map(
@@ -21,10 +32,13 @@ export default function RateProbChart({ today, previous }: Props) {
   return (
     <div>
       {meetings.map((meeting) => {
-        const rows = today.probs
+        const all = today.probs
           .filter((p) => p.meeting_date === meeting && p.probability > 0.05)
           .sort((a, b) => b.probability - a.probability);
-        if (rows.length === 0) return null;
+        if (all.length === 0) return null;
+        const isOpen = expanded.has(meeting);
+        const rows = isOpen ? all : all.slice(0, TOP_N);
+        const hidden = all.length - rows.length;
         return (
           <div key={meeting} style={{ marginBottom: 14 }}>
             <div className="small" style={{ marginBottom: 4 }}>
@@ -59,6 +73,11 @@ export default function RateProbChart({ today, previous }: Props) {
                 </div>
               );
             })}
+            {(hidden > 0 || isOpen) && (
+              <button className="seemore" onClick={() => toggle(meeting)}>
+                {isOpen ? 'see less' : `see more… (${hidden})`}
+              </button>
+            )}
           </div>
         );
       })}
