@@ -19,7 +19,9 @@ output/       All generated reports/HTML land here. Gitignored.
 data/         Downloaded market data (gitignored; override QUANT_DATA_DIR).
 DB/           Backtest result stores (gitignored; override QUANT_DB_DIR).
 tools/        Standalone utilities (telegram forwarder).
-docs/         Notes and process docs.
+server/       Market Preparation web app backend (FastAPI + MySQL).
+web/          Market Preparation web app frontend (React + Vite).
+docs/         Notes and process docs (see docs/MarketPrep.md for the web app).
 ```
 
 Rules the code follows (and new code should too):

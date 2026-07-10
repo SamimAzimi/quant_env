@@ -24,10 +24,20 @@ data = ["vectorbt", "yfinance", "requests"]
 dashboard = ["streamlit", "altair", "plotly"]
 # telegram forwarder (tools/telegram_forwarder.py)
 telegram = ["telethon"]
+# Market Preparation web app backend (server/)
+web = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "pymysql",
+    "apscheduler",
+    "telethon",
+    "httpx",
+]
 dev = ["pytest", "jupyter"]
 
 [tool.setuptools]
-packages = ["libs", "config", "strategies"]
+packages = ["libs", "config", "strategies", "server", "server.routers"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

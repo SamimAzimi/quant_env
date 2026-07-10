@@ -83,3 +83,8 @@ Thumbs.db
 # Optional: local database
 db.sqlite3
 db.sqlite3-journal
+
+# Frontend (web/) build artifacts and dependencies
+web/node_modules/
+web/dist/
+web/*.tsbuildinfo
