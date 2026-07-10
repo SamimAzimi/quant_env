@@ -5,9 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import Asset, AssetCategory, Country, Tag
+from ..models import Asset, AssetCategory, Country, Source, Tag
 from ..schemas import (
-    AssetCategoryOut, AssetIn, AssetOut, CountryIn, CountryOut, TagIn, TagOut,
+    AssetCategoryOut, AssetIn, AssetOut, CountryIn, CountryOut,
+    SourceIn, SourceOut, TagIn, TagOut,
 )
 
 router = APIRouter(prefix="/api", tags=["meta"])
@@ -28,6 +29,23 @@ def create_tag(payload: TagIn, db: Session = Depends(get_db)):
     db.add(tag)
     db.commit()
     return tag
+
+
+@router.get("/sources", response_model=list[SourceOut])
+def list_sources(db: Session = Depends(get_db)):
+    return db.query(Source).order_by(Source.name).all()
+
+
+@router.post("/sources", response_model=SourceOut, status_code=201)
+def create_source(payload: SourceIn, db: Session = Depends(get_db)):
+    name = payload.name.strip()
+    existing = db.query(Source).filter(Source.name == name).first()
+    if existing:
+        return existing
+    source = Source(name=name)
+    db.add(source)
+    db.commit()
+    return source
 
 
 @router.get("/effects", response_model=list[AssetCategoryOut])

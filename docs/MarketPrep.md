@@ -79,19 +79,29 @@ session config). Pre-day levels and log returns use this window too.
     timeframe selector (default 15m), any assets from the CSV store.
   - *Charts*: yesterday's candles for NDX, XAUUSD, XAGUSD, USDJPY, EURUSD
     with pre-day high/low and per-session high/low price lines.
-  - *To watch*: news flagged `to_watch`, persists across days until
-    dismissed; click an item to expand its recorded details.
+  - *To watch*: all **open** stories, with related follow-ups nested
+    recursively under their parent story. Click a story to expand its
+    details; Edit opens the full story editor (fields, tags, effects, and
+    parent relationships); Done ✓ closes it. Effect and tag labels sit
+    beside each title.
   - *Today news*: today's recorded news with effect/tag chips; yesterday's
     news scrolls in a ticker at the top.
   - *Trades*: the day's + open trades — open ones are highlighted with an
     accent border, closed ones dimmed — with an edit dialog for exit
     time/price/reason (times are UTC).
 - **History** — date-range filtered sections: all trades (open rows
-  highlighted), news (filterable by tag and effect), VIX readings as a
-  line chart, and the evolution of the nearest FOMC meeting's top rate
-  buckets across recorded snapshots.
+  highlighted); news with fuzzy title search (select a story to see its
+  full related thread), recursive **story groups** (connected stories in
+  the range, named after the earliest primary story) with an optional
+  graph view (clickable nodes) and a news-on-candles view (pick timeframe
+  + asset; each story is pinned to the candle nearest its publish time);
+  VIX readings as a line chart; and the evolution of the nearest FOMC
+  meeting's top rate buckets across recorded snapshots.
 - **Record** — the round **+** button (bottom-right, every page) opens an
-  overlay with tabs: News, Trade Journal (asset ticker from the database,
+  overlay with tabs: News (title, details, role — primary / supporting /
+  contradicting / duplicate / update —, source with inline add, publish
+  time, tags, effects, open/close status, and fuzzy-search linking to
+  related stories), Trade Journal (asset ticker from the database,
   entry/exit price), Analyze & Thoughts, VIX, Fear & Greed, Economic
   Reports (with country), FOMC (paste the rate-probability markdown
   table; `server/rate_table.py` parses and stores it).
@@ -101,13 +111,16 @@ nav — the Record button lives outside the router so it appears everywhere.
 
 ## Schema (MySQL, normalized)
 
-`news` ⟷ `tags` via `news_tags`; `news` ⟷ `assets` via `news_effects`;
+`news` (role, open/close status, publish_time, FK → `sources`) ⟷ `tags`
+via `news_tags`; ⟷ `assets` via `news_effects`; stories link to each
+other through `news_relationships` (parent → child, cycle-checked);
 `assets` belong to `asset_categories` (kind: hard/soft — Commodities are
 hard; Indices/Forex/Crypto/Bonds/Derivatives/Stock are soft);
 `trades` (FK → assets, entry/exit price); `econ_reports` (FK →
 `countries`, seeded and user-extendable); `vix_readings`,
 `fear_greed_readings`, `thoughts`; `rate_snapshots` 1-* `rate_probs`
-(meeting date × bps bucket).
+(meeting date × bps bucket). Upgrading databases keep their watch list:
+the old `to_watch` flag backfills `status` (watched → open).
 
 Schema changes are applied automatically on startup: `server/migrate.py`
 creates missing tables and adds missing (nullable/defaulted) columns, so

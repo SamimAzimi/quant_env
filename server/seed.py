@@ -8,7 +8,18 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from .models import Asset, AssetCategory, Country, Tag
+from .models import Asset, AssetCategory, Country, Source, Tag
+
+DEFAULT_SOURCES = [
+    "Bloomberg",
+    "Reuters",
+    "CNBC",
+    "Financial Times",
+    "WSJ",
+    "X / Twitter",
+    "FinancialJuice",
+    "ForexFactory",
+]
 
 DEFAULT_COUNTRIES = [
     "United States",
@@ -94,6 +105,11 @@ def seed(db: Session) -> None:
     for name in DEFAULT_COUNTRIES:
         if name not in existing_countries:
             db.add(Country(name=name))
+
+    existing_sources = {s.name for s in db.query(Source).all()}
+    for name in DEFAULT_SOURCES:
+        if name not in existing_sources:
+            db.add(Source(name=name))
 
     existing_cats = {c.name: c for c in db.query(AssetCategory).all()}
     existing_tickers = {a.ticker for a in db.query(Asset).all()}

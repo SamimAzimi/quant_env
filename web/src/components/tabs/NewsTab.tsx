@@ -1,24 +1,39 @@
 import { useEffect, useState } from 'react';
-import { api, type AssetCategory, type Tag } from '../../api';
+import {
+  api, type AssetCategory, type NewsItem, type NewsRole, type Source, type Tag,
+} from '../../api';
 import MultiSelect, { type Option } from '../MultiSelect';
+import NewsSearchPicker from '../NewsSearchPicker';
+import UtcDateTimeInput from './UtcDateTimeInput';
+
+const ROLES: NewsRole[] = ['primary', 'supporting', 'contradicting', 'duplicate', 'update'];
 
 export default function NewsTab({ onSaved }: { onSaved: () => void }) {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [role, setRole] = useState<NewsRole>('primary');
+  const [sources, setSources] = useState<Source[]>([]);
+  const [sourceId, setSourceId] = useState('');
+  const [addingSource, setAddingSource] = useState(false);
+  const [newSource, setNewSource] = useState('');
+  const [publishTime, setPublishTime] = useState('');
   const [tags, setTags] = useState<Tag[]>([]);
   const [categories, setCategories] = useState<AssetCategory[]>([]);
   const [tagIds, setTagIds] = useState<number[]>([]);
   const [effectIds, setEffectIds] = useState<number[]>([]);
-  const [toWatch, setToWatch] = useState(false);
+  const [keepOpen, setKeepOpen] = useState(false);
+  const [related, setRelated] = useState<NewsItem[]>([]);
   const [status, setStatus] = useState('');
 
   const loadMeta = async () => {
-    const [t, c] = await Promise.all([
+    const [t, c, s] = await Promise.all([
       api.get<Tag[]>('/api/tags'),
       api.get<AssetCategory[]>('/api/effects'),
+      api.get<Source[]>('/api/sources'),
     ]);
     setTags(t);
     setCategories(c);
+    setSources(s);
   };
   useEffect(() => { loadMeta().catch((e) => setStatus(String(e))); }, []);
 
@@ -38,8 +53,6 @@ export default function NewsTab({ onSaved }: { onSaved: () => void }) {
   };
 
   const addEffect = async (name: string) => {
-    // New effects land in the first soft category unless the user prefixes
-    // "Category: TICKER" (e.g. "Crypto: DOGEUSDT").
     let categoryId = categories.find((c) => c.kind === 'soft')?.id ?? categories[0]?.id;
     let ticker = name;
     const m = name.match(/^([\w ]+):\s*(.+)$/);
@@ -54,13 +67,31 @@ export default function NewsTab({ onSaved }: { onSaved: () => void }) {
     setEffectIds((ids) => (ids.includes(asset.id) ? ids : [...ids, asset.id]));
   };
 
+  const addSource = async () => {
+    const n = newSource.trim();
+    if (!n) return;
+    const created = await api.post<Source>('/api/sources', { name: n });
+    await loadMeta();
+    setSourceId(String(created.id));
+    setNewSource('');
+    setAddingSource(false);
+  };
+
   const save = async () => {
     setStatus('');
     try {
       await api.post('/api/news', {
-        title, body, tag_ids: tagIds, effect_ids: effectIds, to_watch: toWatch,
+        title, body, role,
+        source_id: sourceId === '' ? null : Number(sourceId),
+        status: keepOpen ? 'open' : 'close',
+        publish_time: publishTime || null,
+        tag_ids: tagIds,
+        effect_ids: effectIds,
+        parent_ids: related.map((r) => r.id),
       });
-      setTitle(''); setBody(''); setTagIds([]); setEffectIds([]); setToWatch(false);
+      setTitle(''); setBody(''); setRole('primary'); setSourceId('');
+      setPublishTime(''); setTagIds([]); setEffectIds([]); setKeepOpen(false);
+      setRelated([]);
       setStatus('Saved ✓');
       onSaved();
     } catch (e) {
@@ -78,6 +109,41 @@ export default function NewsTab({ onSaved }: { onSaved: () => void }) {
         <span>News</span>
         <textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Details…" />
       </label>
+      <div className="row">
+        <label className="field" style={{ flex: 1 }}>
+          <span>Role</span>
+          <select value={role} onChange={(e) => setRole(e.target.value as NewsRole)}>
+            {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </label>
+        <label className="field" style={{ flex: 1 }}>
+          <span>Source</span>
+          <div className="row" style={{ flexWrap: 'nowrap' }}>
+            <select style={{ flex: 1 }} value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+              <option value="">— optional —</option>
+              {sources.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <button className="ghost" onClick={() => setAddingSource((v) => !v)}>+</button>
+          </div>
+        </label>
+      </div>
+      {addingSource && (
+        <div className="row" style={{ marginBottom: 10, flexWrap: 'nowrap' }}>
+          <input
+            style={{ flex: 1 }}
+            value={newSource}
+            placeholder="New source name"
+            onChange={(e) => setNewSource(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addSource()}
+          />
+          <button className="primary" disabled={!newSource.trim()} onClick={addSource}>Add</button>
+        </div>
+      )}
+      <UtcDateTimeInput
+        label="Publish Time (UTC) — leave empty for now"
+        value={publishTime}
+        onChange={setPublishTime}
+      />
       <span className="small muted">Tags</span>
       <MultiSelect
         placeholder="Select tags…"
@@ -96,9 +162,14 @@ export default function NewsTab({ onSaved }: { onSaved: () => void }) {
         onAddNew={addEffect}
         addPlaceholder="New ticker (or 'Crypto: DOGEUSDT')"
       />
+      <NewsSearchPicker
+        label="Related stories (this news will link under them)"
+        selected={related}
+        onChange={setRelated}
+      />
       <label className="row" style={{ margin: '10px 0' }}>
-        <input type="checkbox" checked={toWatch} onChange={(e) => setToWatch(e.target.checked)} />
-        To watch — keep on the watch list until dismissed
+        <input type="checkbox" checked={keepOpen} onChange={(e) => setKeepOpen(e.target.checked)} />
+        Keep open — stays in To Watch until closed
       </label>
       <button className="primary" disabled={!title.trim()} onClick={save}>Save news</button>
       {status && <p className={status.startsWith('Saved') ? 'small' : 'error'}>{status}</p>}

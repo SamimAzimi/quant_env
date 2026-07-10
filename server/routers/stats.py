@@ -41,6 +41,18 @@ def charts(tf: str = Query("15m"), assets: str | None = Query(None),
     return {"charts": out, "errors": errors}
 
 
+@router.get("/bars")
+def bars(asset: str, tf: str = Query("15m"),
+         start: date = Query(...), end: date = Query(...)):
+    """Raw bars for one asset over a date range (news-to-candle mapping)."""
+    if tf not in marketdata.TIMEFRAMES:
+        raise HTTPException(422, f"Unknown timeframe {tf!r}")
+    try:
+        return marketdata.bars_range(asset, tf, start, end)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
 @router.get("/returns")
 def returns(tf: str = Query("15m"), assets: str | None = Query(None),
             date_: date | None = Query(None, alias="date")):
