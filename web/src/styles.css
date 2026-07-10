@@ -39,6 +39,26 @@ body {
 .app-header h1 { font-size: 18px; margin: 0; }
 .app-header .date { color: var(--muted); font-size: 13px; margin-left: auto; }
 
+.main-nav { display: flex; gap: 4px; margin-left: 12px; }
+.main-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+.main-nav a:hover { color: var(--text); background: var(--panel-2); }
+.main-nav a.active { color: var(--text); background: var(--panel-2); font-weight: 600; }
+
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.page-toolbar .page-title { font-size: 20px; margin: 0; order: -1; margin-right: auto; }
+
 .page { padding: 14px; max-width: 1900px; margin: 0 auto; }
 
 /* Sections grid: 1 col on mobile, 2 on laptop, dense multi-col on TV. */
@@ -263,3 +283,55 @@ table.data td input, table.data td select { padding: 4px 6px; font-size: 13px; }
 .watch-item, .news-item { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .watch-item:last-child, .news-item:last-child { border-bottom: none; }
 .news-item .title { font-weight: 600; }
+.watch-item.clickable { cursor: pointer; }
+.watch-item.clickable:hover { background: rgba(79, 143, 247, 0.05); }
+.watch-detail { padding: 6px 0 2px; border-top: 1px dashed var(--border); margin-top: 6px; }
+
+/* Open vs closed trades: subtle but distinct */
+.trade-item {
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+}
+.trade-item.open {
+  border-left-color: var(--accent);
+  background: rgba(79, 143, 247, 0.07);
+}
+.trade-item.closed {
+  border-left-color: var(--border);
+  background: var(--panel-2);
+  opacity: 0.75;
+}
+.chip.open-chip { border-color: var(--accent); color: var(--accent); }
+.chip.closed-chip { border-color: var(--muted); color: var(--muted); }
+tr.row-open td { background: rgba(79, 143, 247, 0.06); }
+
+/* Collapsible country groups in Macro */
+.country-group { margin-bottom: 6px; }
+.country-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 6px 2px;
+  cursor: pointer;
+  text-align: left;
+}
+.country-head:hover strong { color: var(--accent); }
+
+/* "see more…" toggle under rate-probability bars */
+button.seemore {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+button.seemore:hover { color: var(--accent); }

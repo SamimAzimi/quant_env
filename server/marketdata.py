@@ -8,6 +8,11 @@ Provides:
   - the last completed trading day's bars per asset ("yesterday")
   - key levels: pre-day high/low plus each FX session's high/low
   - cumulative log returns across yesterday for the Pre-day stats chart
+
+A "trading day" here is the Tokyo-open → New-York-close window in UTC
+(00:00–21:00 with the default config/sessions.py windows), not the full
+calendar day. Every endpoint accepts an as-of date so the website's date
+selector can replay any past day.
 """
 from __future__ import annotations
 
@@ -23,6 +28,11 @@ from libs.data_loader import load_csv
 
 CHART_ASSETS = ["NDX", "XAUUSD", "XAGUSD", "USDJPY", "EURUSD"]
 TIMEFRAMES = ["5m", "15m", "30m", "1h", "2h", "4h"]
+
+# Trading-day window in UTC hours: Tokyo session open → New York session
+# close (00:00–21:00 by default). "Yesterday" always means this window.
+DAY_START_H = DEFAULT_SESSIONS["tokyo"][0]
+DAY_END_H = DEFAULT_SESSIONS["newyork"][1]
 
 
 def available_assets() -> list[str]:
@@ -55,7 +65,7 @@ def load_bars(asset: str, tf: str) -> pd.DataFrame:
 
 
 def last_trading_day(df: pd.DataFrame, today: date | None = None) -> date:
-    """Most recent UTC calendar day with bars strictly before today.
+    """Most recent trading day with bars strictly before `today` (UTC).
 
     Skips weekends/holidays automatically: it's simply the last day present
     in the data, so on a Monday "yesterday" resolves to Friday.
@@ -69,8 +79,10 @@ def last_trading_day(df: pd.DataFrame, today: date | None = None) -> date:
 
 
 def _day_slice(df: pd.DataFrame, day: date) -> pd.DataFrame:
-    mask = df["Datetime"].dt.date == day
-    return df.loc[mask]
+    """Bars in the Tokyo-open → NY-close window of `day`."""
+    start = pd.Timestamp(day) + pd.Timedelta(hours=DAY_START_H)
+    end = pd.Timestamp(day) + pd.Timedelta(hours=DAY_END_H)
+    return df[(df["Datetime"] >= start) & (df["Datetime"] < end)]
 
 
 def _session_windows() -> dict[str, tuple[int, int]]:
@@ -111,10 +123,10 @@ def key_levels(df: pd.DataFrame, day: date) -> list[dict]:
     return levels
 
 
-def yesterday_chart(asset: str, tf: str = "15m") -> dict:
-    """Bars + key levels for the last completed trading day of one asset."""
+def yesterday_chart(asset: str, tf: str = "15m", as_of: date | None = None) -> dict:
+    """Bars + key levels for the last completed trading day before `as_of`."""
     df = load_bars(asset, tf)
-    day = last_trading_day(df)
+    day = last_trading_day(df, as_of)
     bars = _day_slice(df, day)
     return {
         "asset": asset,
@@ -134,13 +146,14 @@ def yesterday_chart(asset: str, tf: str = "15m") -> dict:
     }
 
 
-def yesterday_log_returns(assets: list[str], tf: str = "15m") -> dict:
+def yesterday_log_returns(assets: list[str], tf: str = "15m",
+                          as_of: date | None = None) -> dict:
     """Cumulative intraday log returns over each asset's last trading day."""
     series = []
     for asset in assets:
         try:
             df = load_bars(asset, tf)
-            day = last_trading_day(df)
+            day = last_trading_day(df, as_of)
         except (FileNotFoundError, ValueError):
             continue
         bars = _day_slice(df, day)

@@ -16,7 +16,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .db import Base, SessionLocal, engine
+from .db import SessionLocal, engine
+from .migrate import migrate
 from .routers import meta, news, rate_probs, records, stats, trades
 from .scheduler import alerts_enabled, build_scheduler
 from .seed import seed
@@ -28,7 +29,7 @@ WEB_DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(engine)
+    migrate(engine)   # create missing tables and additive columns
     with SessionLocal() as db:
         seed(db)
     scheduler = None

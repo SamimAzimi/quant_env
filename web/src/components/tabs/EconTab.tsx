@@ -1,7 +1,11 @@
-import { useState } from 'react';
-import { api } from '../../api';
+import { useEffect, useState } from 'react';
+import { api, type Country } from '../../api';
 
 export default function EconTab({ onSaved }: { onSaved: () => void }) {
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [countryId, setCountryId] = useState('');
+  const [newCountry, setNewCountry] = useState('');
+  const [addingCountry, setAddingCountry] = useState(false);
   const [name, setName] = useState('');
   const [forecast, setForecast] = useState('');
   const [previous, setPrevious] = useState('');
@@ -9,11 +13,28 @@ export default function EconTab({ onSaved }: { onSaved: () => void }) {
   const [outcome, setOutcome] = useState('');
   const [status, setStatus] = useState('');
 
+  const loadCountries = () =>
+    api.get<Country[]>('/api/countries').then(setCountries).catch((e) => setStatus(String(e)));
+
+  useEffect(() => { loadCountries(); }, []);
+
+  const addCountry = async () => {
+    const n = newCountry.trim();
+    if (!n) return;
+    const created = await api.post<Country>('/api/countries', { name: n });
+    await loadCountries();
+    setCountryId(String(created.id));
+    setNewCountry('');
+    setAddingCountry(false);
+  };
+
   const save = async () => {
     setStatus('');
     try {
       await api.post('/api/econ-reports', {
-        name, forecast, previous,
+        name,
+        country_id: countryId === '' ? null : Number(countryId),
+        forecast, previous,
         actual: actual || null,
         outcome: outcome || null,
       });
@@ -31,6 +52,30 @@ export default function EconTab({ onSaved }: { onSaved: () => void }) {
         <span>Report Name</span>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. CPI YoY" />
       </label>
+      <label className="field">
+        <span>Country</span>
+        <div className="row" style={{ flexWrap: 'nowrap' }}>
+          <select style={{ flex: 1 }} value={countryId} onChange={(e) => setCountryId(e.target.value)}>
+            <option value="">— select —</option>
+            {countries.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button className="ghost" onClick={() => setAddingCountry((v) => !v)}>+</button>
+        </div>
+      </label>
+      {addingCountry && (
+        <div className="row" style={{ marginBottom: 10, flexWrap: 'nowrap' }}>
+          <input
+            style={{ flex: 1 }}
+            value={newCountry}
+            placeholder="New country name"
+            onChange={(e) => setNewCountry(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addCountry()}
+          />
+          <button className="primary" disabled={!newCountry.trim()} onClick={addCountry}>
+            Add
+          </button>
+        </div>
+      )}
       <div className="row">
         <label className="field" style={{ flex: 1 }}>
           <span>Forecast</span>

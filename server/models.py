@@ -66,6 +66,13 @@ class Asset(Base):
     category = relationship("AssetCategory", back_populates="assets")
 
 
+class Country(Base):
+    """Lookup for economic-report countries (normalized, user-extendable)."""
+    __tablename__ = "countries"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(80), unique=True, nullable=False)
+
+
 class News(Base):
     __tablename__ = "news"
     id = Column(Integer, primary_key=True)
@@ -81,14 +88,19 @@ class News(Base):
 class Trade(Base):
     __tablename__ = "trades"
     id = Column(Integer, primary_key=True)
+    asset_id = Column(ForeignKey("assets.id"), nullable=True)
     entry_time = Column(DateTime, nullable=False)          # UTC
     exit_time = Column(DateTime, nullable=True)            # UTC, added later
+    entry_price = Column(Float, nullable=True)
+    exit_price = Column(Float, nullable=True)
     entry_reason = Column(Text, nullable=False, default="")
     exit_reason = Column(Text, nullable=True)
     tp = Column(Float, nullable=True)
     sl = Column(Float, nullable=True)
     remarks = Column(Text, nullable=False, default="")
     created_at = Column(DateTime, nullable=False, default=utcnow)
+
+    asset = relationship("Asset", lazy="joined")
 
 
 class VixReading(Base):
@@ -108,6 +120,7 @@ class FearGreedReading(Base):
 class EconReport(Base):
     __tablename__ = "econ_reports"
     id = Column(Integer, primary_key=True)
+    country_id = Column(ForeignKey("countries.id"), nullable=True)
     name = Column(String(200), nullable=False)
     forecast = Column(String(50), nullable=False, default="")
     previous = Column(String(50), nullable=False, default="")
@@ -115,6 +128,8 @@ class EconReport(Base):
     outcome = Column(Enum("beat", "miss", "inline", name="econ_outcome"),
                      nullable=True)
     created_at = Column(DateTime, nullable=False, default=utcnow)
+
+    country = relationship("Country", lazy="joined")
 
 
 class Thought(Base):

@@ -41,6 +41,15 @@ class AssetIn(BaseModel):
     category_id: int
 
 
+class CountryOut(OrmModel):
+    id: int
+    name: str
+
+
+class CountryIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
 # --- news ---------------------------------------------------------------
 
 class NewsIn(BaseModel):
@@ -68,8 +77,11 @@ class NewsOut(OrmModel):
 # --- trades -------------------------------------------------------------
 
 class TradeIn(BaseModel):
+    asset_id: Optional[int] = None
     entry_time: datetime
     exit_time: Optional[datetime] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
     entry_reason: str = ""
     exit_reason: Optional[str] = None
     tp: Optional[float] = None
@@ -78,8 +90,11 @@ class TradeIn(BaseModel):
 
 
 class TradePatch(BaseModel):
+    asset_id: Optional[int] = None
     entry_time: Optional[datetime] = None
     exit_time: Optional[datetime] = None
+    entry_price: Optional[float] = None
+    exit_price: Optional[float] = None
     entry_reason: Optional[str] = None
     exit_reason: Optional[str] = None
     tp: Optional[float] = None
@@ -89,8 +104,12 @@ class TradePatch(BaseModel):
 
 class TradeOut(OrmModel):
     id: int
+    asset_id: Optional[int]
+    asset: Optional[AssetOut]
     entry_time: datetime
     exit_time: Optional[datetime]
+    entry_price: Optional[float]
+    exit_price: Optional[float]
     entry_reason: str
     exit_reason: Optional[str]
     tp: Optional[float]
@@ -127,6 +146,7 @@ class ThoughtOut(OrmModel):
 
 class EconReportIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
+    country_id: Optional[int] = None
     forecast: str = ""
     previous: str = ""
     actual: Optional[str] = None
@@ -134,6 +154,7 @@ class EconReportIn(BaseModel):
 
 
 class EconReportPatch(BaseModel):
+    country_id: Optional[int] = None
     actual: Optional[str] = None
     outcome: Optional[Literal["beat", "miss", "inline"]] = None
 
@@ -141,6 +162,7 @@ class EconReportPatch(BaseModel):
 class EconReportOut(OrmModel):
     id: int
     name: str
+    country: Optional[CountryOut]
     forecast: str
     previous: str
     actual: Optional[str]

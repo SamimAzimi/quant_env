@@ -59,37 +59,58 @@ TELEGRAM_ALERT_CHAT=@your_group      # or the numeric -100… group id
 
 ## Pages & data flow
 
-- **Stats** (default page) — sections:
+The header carries a main menu: **Market Prep** (default) and **History**.
+
+"Yesterday" everywhere means the **trading-day window**: Tokyo session
+open → New York session close in UTC (00:00–21:00 with the default
+session config). Pre-day levels and log returns use this window too.
+
+- **Market Prep** (default page) — a date picker in the page toolbar
+  replays any past day: every section behaves as if that day were today.
+  Sections:
   - *Sentiment*: Fear & Greed gauge + VIX, from readings recorded the
     **previous UTC day** (record today → shows tomorrow).
-  - *Macro*: recorded economic reports with inline edit of Actual and
-    Beat/Miss once released.
-  - *Rate probabilities*: latest recorded FedWatch table as bars, with
-    the previous day's value marked for comparison.
+  - *Macro*: economic reports grouped by country (expanded by default,
+    collapsible per country) with inline edit of Actual and Beat/Miss.
+  - *Rate probabilities*: latest recorded FedWatch table as bars — top 3
+    buckets per meeting, the rest behind "see more…" — with the previous
+    day's value marked for comparison.
   - *Pre-day stats*: color-coded cumulative log returns over yesterday,
     timeframe selector (default 15m), any assets from the CSV store.
   - *Charts*: yesterday's candles for NDX, XAUUSD, XAGUSD, USDJPY, EURUSD
     with pre-day high/low and per-session high/low price lines.
   - *To watch*: news flagged `to_watch`, persists across days until
-    dismissed.
+    dismissed; click an item to expand its recorded details.
   - *Today news*: today's recorded news with effect/tag chips; yesterday's
     news scrolls in a ticker at the top.
-  - *Trades*: today's + open trades, with an edit dialog for exit
-    time/reason (times are UTC).
+  - *Trades*: the day's + open trades — open ones are highlighted with an
+    accent border, closed ones dimmed — with an edit dialog for exit
+    time/price/reason (times are UTC).
+- **History** — date-range filtered sections: all trades (open rows
+  highlighted), news (filterable by tag and effect), VIX readings as a
+  line chart, and the evolution of the nearest FOMC meeting's top rate
+  buckets across recorded snapshots.
 - **Record** — the round **+** button (bottom-right, every page) opens an
-  overlay with tabs: News, Trade Journal, Analyze & Thoughts, VIX,
-  Fear & Greed, Economic Reports, FOMC (paste the rate-probability
-  markdown table; `server/rate_table.py` parses and stores it).
+  overlay with tabs: News, Trade Journal (asset ticker from the database,
+  entry/exit price), Analyze & Thoughts, VIX, Fear & Greed, Economic
+  Reports (with country), FOMC (paste the rate-probability markdown
+  table; `server/rate_table.py` parses and stores it).
 
-New pages: add a `<Route>` in `web/src/App.tsx` — the header and Record
-button already live outside the router so they appear everywhere.
+New pages: add a `<Route>` in `web/src/App.tsx` and a link in the header
+nav — the Record button lives outside the router so it appears everywhere.
 
 ## Schema (MySQL, normalized)
 
 `news` ⟷ `tags` via `news_tags`; `news` ⟷ `assets` via `news_effects`;
 `assets` belong to `asset_categories` (kind: hard/soft — Commodities are
 hard; Indices/Forex/Crypto/Bonds/Derivatives/Stock are soft);
-`trades`, `vix_readings`, `fear_greed_readings`, `econ_reports`,
-`thoughts`; `rate_snapshots` 1-* `rate_probs` (meeting date × bps bucket).
+`trades` (FK → assets, entry/exit price); `econ_reports` (FK →
+`countries`, seeded and user-extendable); `vix_readings`,
+`fear_greed_readings`, `thoughts`; `rate_snapshots` 1-* `rate_probs`
+(meeting date × bps bucket).
+
+Schema changes are applied automatically on startup: `server/migrate.py`
+creates missing tables and adds missing (nullable/defaulted) columns, so
+an existing database upgrades in place.
 
 All timestamps are stored naive-UTC, matching the CSV market data.

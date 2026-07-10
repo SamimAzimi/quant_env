@@ -8,7 +8,20 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from .models import Asset, AssetCategory, Tag
+from .models import Asset, AssetCategory, Country, Tag
+
+DEFAULT_COUNTRIES = [
+    "United States",
+    "Eurozone",
+    "United Kingdom",
+    "Japan",
+    "China",
+    "Switzerland",
+    "Canada",
+    "Australia",
+    "New Zealand",
+    "Global",
+]
 
 DEFAULT_TAGS = [
     "TOP5 Countries",
@@ -25,7 +38,9 @@ DEFAULT_TAGS = [
 DEFAULT_ASSETS = {
     "Commodities": ("hard", [
         ("GOLD", "Gold"),
+        ("XAUUSD", "Gold Spot"),
         ("SILVER", "Silver"),
+        ("XAGUSD", "Silver Spot"),
         ("OIL", "Crude Oil"),
         ("NATGAS", "Natural Gas"),
         ("COPPER", "Copper"),
@@ -74,6 +89,11 @@ def seed(db: Session) -> None:
     for name in DEFAULT_TAGS:
         if name not in existing_tags:
             db.add(Tag(name=name))
+
+    existing_countries = {c.name for c in db.query(Country).all()}
+    for name in DEFAULT_COUNTRIES:
+        if name not in existing_countries:
+            db.add(Country(name=name))
 
     existing_cats = {c.name: c for c in db.query(AssetCategory).all()}
     existing_tickers = {a.ticker for a in db.query(Asset).all()}

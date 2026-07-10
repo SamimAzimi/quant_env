@@ -41,8 +41,9 @@ def test_key_levels_include_preday_and_sessions(store):
     levels = marketdata.key_levels(df, date(2026, 7, 9))
     by_label = {l["label"]: l["value"] for l in levels}
 
-    # Pre-day = 2026-07-08: closes 100..111.5, high = close+1, low = close-1
-    assert by_label["Pre-day High"] == pytest.approx(112.5)
+    # Pre-day = the Tokyo→NY window (00:00-21:00) of 2026-07-08: bars 0..20,
+    # so high = close[20]+1 and low = close[0]-1
+    assert by_label["Pre-day High"] == pytest.approx(100 + 20 * 0.5 + 1)
     assert by_label["Pre-day Low"] == pytest.approx(99.0)
 
     # London session (07:00-16:00 UTC) on 07-09: bars 31..39 → high = close+1
@@ -57,9 +58,15 @@ def test_key_levels_include_preday_and_sessions(store):
 def test_yesterday_chart_shape(store):
     chart = marketdata.yesterday_chart("TEST", "1h")
     assert chart["day"] == "2026-07-09"
-    assert len(chart["bars"]) == 24
+    # trading-day window is Tokyo open → NY close: 00:00-21:00 → 21 hourly bars
+    assert len(chart["bars"]) == 21
     assert {"time", "open", "high", "low", "close"} <= set(chart["bars"][0])
     assert any(l["kind"] == "preday" for l in chart["levels"])
+
+
+def test_yesterday_chart_as_of_replays_past_days(store):
+    chart = marketdata.yesterday_chart("TEST", "1h", as_of=date(2026, 7, 9))
+    assert chart["day"] == "2026-07-08"
 
 
 def test_log_returns_cumulative(store):
@@ -67,5 +74,6 @@ def test_log_returns_cumulative(store):
     assert len(out["series"]) == 1
     pts = out["series"][0]["points"]
     assert pts[0]["value"] == 0.0
-    expected = float(np.log((100 + 47 * 0.5) / (100 + 24 * 0.5)) * 100)
+    # window bars are 24..44 (00:00-20:00 of 07-09)
+    expected = float(np.log((100 + 44 * 0.5) / (100 + 24 * 0.5)) * 100)
     assert pts[-1]["value"] == pytest.approx(expected, abs=1e-3)
