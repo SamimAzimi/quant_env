@@ -107,19 +107,40 @@ def make_handler(client, label):
     return handler
 
 
+async def resolve_chats(client, label, chats):
+    """Resolve configured peers up front so bad entries fail loudly at
+    startup instead of raising on every incoming update."""
+    resolved = []
+    for chat in chats:
+        try:
+            resolved.append(await client.get_input_entity(chat))
+        except ValueError as e:
+            logger.error(
+                f"[{label}] Cannot resolve source chat {chat!r}: {e}. "
+                f"Numeric IDs must not be quoted as usernames; the account "
+                f"must also have seen the chat (be a member of it)."
+            )
+    return resolved
+
+
 async def run_account(account):
     label = account["label"]
     client = TelegramClient(account["session"], account["api_id"], account["api_hash"])
 
-    client.add_event_handler(
-        make_handler(client, label),
-        events.NewMessage(chats=account["source_chats"])
-    )
-
     await client.start()
     me = await client.get_me()
     logger.info(f"[{label}] Logged in as {me.first_name} (@{me.username})")
-    logger.info(f"[{label}] Listening on {len(account['source_chats'])} source chat(s)...")
+
+    source_chats = await resolve_chats(client, label, account["source_chats"])
+    if not source_chats:
+        logger.error(f"[{label}] No resolvable source chats; not listening.")
+        return
+
+    client.add_event_handler(
+        make_handler(client, label),
+        events.NewMessage(chats=source_chats)
+    )
+    logger.info(f"[{label}] Listening on {len(source_chats)} source chat(s)...")
 
     await client.run_until_disconnected()
 
