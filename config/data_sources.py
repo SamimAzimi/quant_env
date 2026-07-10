@@ -26,6 +26,7 @@ ASSETS = [
     ("XAGUSD",   "C:XAGUSD",  "SI=F"),
     ("XPTUSD",   "C:XPTUSD",  "PL=F"),
     ("USDJPY",   "C:USDJPY",  "USDJPY=X"),
+    ("EURUSD",   "C:EURUSD",  "EURUSD=X"),
     ("USDEUR",   "C:USDEUR",  "USDEUR=X"),  # NOTE: confirm base/quote direction
     ("GBPUSD",   "C:GBPUSD",  "GBPUSD=X"),
     ("GSPC",     "I:GSPC",    "^GSPC"),
