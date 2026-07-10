@@ -6,6 +6,9 @@ CSVs are UTC bar-open times, sessions are defined in UTC hours).
 Entity relationships:
     news        *--* tag           (news_tags)
     news        *--* asset         (news_effects — the "Effect" multi-select)
+    news        *--1 source        (optional origin of the story)
+    news        *--* news          (news_relationships: parent story → child
+                                    follow-up/supporting/contradicting story)
     asset       *--1 asset_category (Forex, Crypto, ... each hard or soft)
     rate_prob   *--1 rate_snapshot  (one snapshot per recorded FedWatch table)
 """
@@ -14,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, Enum, Float, ForeignKey, Integer,
+    Column, Date, DateTime, Enum, Float, ForeignKey, Integer,
     String, Table, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
@@ -73,16 +76,44 @@ class Country(Base):
     name = Column(String(80), unique=True, nullable=False)
 
 
+class Source(Base):
+    """Where a story came from (Bloomberg, Reuters, X, ...)."""
+    __tablename__ = "sources"
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), unique=True, nullable=False)
+
+
+NEWS_ROLES = ("primary", "supporting", "contradicting", "duplicate", "update")
+
+
 class News(Base):
     __tablename__ = "news"
     id = Column(Integer, primary_key=True)
     title = Column(String(300), nullable=False)
     body = Column(Text, nullable=False, default="")
-    to_watch = Column(Boolean, nullable=False, default=False)
+    role = Column(Enum(*NEWS_ROLES, name="news_role"),
+                  nullable=False, default="primary")
+    source_id = Column(ForeignKey("sources.id"), nullable=True)
+    # open stories appear in To Watch until closed (replaces old to_watch)
+    status = Column(Enum("open", "close", name="news_status"),
+                    nullable=False, default="close")
+    publish_time = Column(DateTime, nullable=False, default=utcnow)  # UTC
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
+    source = relationship("Source", lazy="joined")
     tags = relationship("Tag", secondary=news_tags, lazy="selectin")
     effects = relationship("Asset", secondary=news_effects, lazy="selectin")
+
+
+class NewsRelationship(Base):
+    """Directed story link: parent (original) → child (follow-up)."""
+    __tablename__ = "news_relationships"
+    __table_args__ = (
+        UniqueConstraint("parent_id", "child_id", name="uq_news_rel"),
+    )
+    id = Column(Integer, primary_key=True)
+    parent_id = Column(ForeignKey("news.id", ondelete="CASCADE"), nullable=False)
+    child_id = Column(ForeignKey("news.id", ondelete="CASCADE"), nullable=False)
 
 
 class Trade(Base):

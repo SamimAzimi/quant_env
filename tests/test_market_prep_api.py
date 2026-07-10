@@ -39,18 +39,19 @@ def test_news_roundtrip_with_tags_effects_and_watch(client):
 
     created = client.post("/api/news", json={
         "title": "Tariff shock", "body": "details",
-        "tag_ids": [tag["id"]], "effect_ids": [asset_id], "to_watch": True,
+        "tag_ids": [tag["id"]], "effect_ids": [asset_id], "status": "open",
     })
     assert created.status_code == 201
     news = created.json()
     assert [t["name"] for t in news["tags"]] == ["China"]
     assert len(news["effects"]) == 1
+    assert news["status"] == "open"
 
     assert len(client.get("/api/news/today").json()) == 1
     assert len(client.get("/api/news/watch").json()) == 1
 
-    # dismissing removes it from the watch list but keeps the news
-    client.patch(f"/api/news/{news['id']}", json={"to_watch": False})
+    # closing removes it from the watch list but keeps the news
+    client.patch(f"/api/news/{news['id']}", json={"status": "close"})
     assert client.get("/api/news/watch").json() == []
     assert len(client.get("/api/news/today").json()) == 1
 

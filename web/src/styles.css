@@ -325,6 +325,16 @@ tr.row-open td { background: rgba(79, 143, 247, 0.06); }
 }
 .country-head:hover strong { color: var(--accent); }
 
+/* News threads, story groups, and search picker */
+.story-node .watch-item { border-bottom: none; border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 4px; }
+.story-node .story-closed { opacity: 0.65; }
+.thread-box { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; margin: 8px 0; background: var(--panel-2); }
+.chip .chip-x {
+  background: none; border: none; color: inherit;
+  padding: 0 0 0 5px; cursor: pointer; font-size: 12px;
+}
+button.selected-chip { border-color: var(--accent); color: var(--accent); }
+
 /* "see more…" toggle under rate-probability bars */
 button.seemore {
   background: none;

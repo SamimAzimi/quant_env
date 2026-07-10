@@ -52,26 +52,73 @@ class CountryIn(BaseModel):
 
 # --- news ---------------------------------------------------------------
 
+NewsRole = Literal["primary", "supporting", "contradicting", "duplicate", "update"]
+NewsStatus = Literal["open", "close"]
+
+
+class SourceOut(OrmModel):
+    id: int
+    name: str
+
+
+class SourceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+
+
 class NewsIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     body: str = ""
+    role: NewsRole = "primary"
+    source_id: Optional[int] = None
+    status: NewsStatus = "close"
+    publish_time: Optional[datetime] = None   # defaults to now (UTC)
     tag_ids: list[int] = []
     effect_ids: list[int] = []
-    to_watch: bool = False
+    parent_ids: list[int] = []                # stories this one relates to
 
 
 class NewsPatch(BaseModel):
-    to_watch: Optional[bool] = None
+    title: Optional[str] = None
+    body: Optional[str] = None
+    role: Optional[NewsRole] = None
+    source_id: Optional[int] = None
+    status: Optional[NewsStatus] = None
+    publish_time: Optional[datetime] = None
+    tag_ids: Optional[list[int]] = None
+    effect_ids: Optional[list[int]] = None
+    parent_ids: Optional[list[int]] = None    # replaces all parent links
 
 
 class NewsOut(OrmModel):
     id: int
     title: str
     body: str
-    to_watch: bool
+    role: str
+    status: str
+    source: Optional[SourceOut]
+    publish_time: datetime
     created_at: datetime
     tags: list[TagOut]
     effects: list[AssetOut]
+
+
+class NewsTreeOut(NewsOut):
+    """A story with its related follow-ups nested recursively."""
+    children: list["NewsTreeOut"] = []
+
+
+class NewsThreadOut(BaseModel):
+    """Full context of one story: ancestors up the chain + its subtree."""
+    ancestors: list[NewsOut]
+    parent_ids: list[int]     # the story's direct parents (for editing links)
+    tree: NewsTreeOut
+
+
+class NewsGroupOut(BaseModel):
+    """A connected component of related stories in a date range."""
+    name: str
+    news: list[NewsOut]                       # sorted by publish_time
+    edges: list[tuple[int, int]]              # (parent_id, child_id)
 
 
 # --- trades -------------------------------------------------------------

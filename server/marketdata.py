@@ -146,6 +146,28 @@ def yesterday_chart(asset: str, tf: str = "15m", as_of: date | None = None) -> d
     }
 
 
+def bars_range(asset: str, tf: str, start: date, end: date) -> dict:
+    """All bars between two dates inclusive — used to map news onto candles."""
+    df = load_bars(asset, tf)
+    lo = pd.Timestamp(start)
+    hi = pd.Timestamp(end) + pd.Timedelta(days=1)
+    window = df[(df["Datetime"] >= lo) & (df["Datetime"] < hi)]
+    return {
+        "asset": asset,
+        "timeframe": tf,
+        "bars": [
+            {
+                "time": int(row.Datetime.timestamp()),
+                "open": float(row.Open),
+                "high": float(row.High),
+                "low": float(row.Low),
+                "close": float(row.Close),
+            }
+            for row in window.itertuples()
+        ],
+    }
+
+
 def yesterday_log_returns(assets: list[str], tf: str = "15m",
                           as_of: date | None = None) -> dict:
     """Cumulative intraday log returns over each asset's last trading day."""

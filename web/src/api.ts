@@ -5,9 +5,24 @@ export interface Asset { id: number; ticker: string; name: string }
 export interface AssetCategory {
   id: number; name: string; kind: 'hard' | 'soft'; assets: Asset[];
 }
+export type NewsRole = 'primary' | 'supporting' | 'contradicting' | 'duplicate' | 'update';
+export interface Source { id: number; name: string }
 export interface NewsItem {
-  id: number; title: string; body: string; to_watch: boolean;
+  id: number; title: string; body: string;
+  role: NewsRole; status: 'open' | 'close';
+  source: Source | null; publish_time: string;
   created_at: string; tags: Tag[]; effects: Asset[];
+}
+export interface NewsTree extends NewsItem { children: NewsTree[] }
+export interface NewsThread {
+  ancestors: NewsItem[];
+  parent_ids: number[];
+  tree: NewsTree;
+}
+export interface NewsGroup {
+  name: string;
+  news: NewsItem[];
+  edges: [number, number][];
 }
 export interface Trade {
   id: number; asset_id: number | null; asset: Asset | null;

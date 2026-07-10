@@ -7,6 +7,7 @@ import RateProbChart from '../components/RateProbChart';
 import ChartsSection from '../sections/ChartsSection';
 import MacroSection from '../sections/MacroSection';
 import PreDayStats from '../sections/PreDayStats';
+import ToWatchSection from '../sections/ToWatchSection';
 import TradesSection from '../sections/TradesSection';
 
 interface StatsMeta {
@@ -30,8 +31,6 @@ export default function MarketPrepPage({ refreshKey }: { refreshKey: number }) {
   const [vix, setVix] = useState<Reading | null>(null);
   const [rateToday, setRateToday] = useState<RateSnapshot | null>(null);
   const [ratePrev, setRatePrev] = useState<RateSnapshot | null>(null);
-  const [watch, setWatch] = useState<NewsItem[]>([]);
-  const [expandedWatch, setExpandedWatch] = useState<number | null>(null);
   const [todayNews, setTodayNews] = useState<NewsItem[]>([]);
   const [yesterdayNews, setYesterdayNews] = useState<NewsItem[]>([]);
 
@@ -49,17 +48,11 @@ export default function MarketPrepPage({ refreshKey }: { refreshKey: number }) {
       .then(setRateToday).catch(() => {});
     api.get<RateSnapshot | null>(withParams('/api/rate-probs/previous-day', p))
       .then(setRatePrev).catch(() => {});
-    api.get<NewsItem[]>('/api/news/watch').then(setWatch).catch(() => {});
     api.get<NewsItem[]>(withParams('/api/news/today', p))
       .then(setTodayNews).catch(() => {});
     api.get<NewsItem[]>(withParams('/api/news/yesterday', p))
       .then(setYesterdayNews).catch(() => {});
   }, [refreshKey, dateParam]);
-
-  const dismissWatch = async (id: number) => {
-    await api.patch(`/api/news/${id}`, { to_watch: false });
-    setWatch((w) => w.filter((n) => n.id !== id));
-  };
 
   const viewingPast = dateParam !== '';
 
@@ -132,38 +125,7 @@ export default function MarketPrepPage({ refreshKey }: { refreshKey: number }) {
           <RateProbChart today={rateToday} previous={ratePrev} />
         </div>
 
-        <div className="card">
-          <h2>To watch</h2>
-          {watch.length === 0 && <p className="muted small">Nothing on the watch list.</p>}
-          {watch.map((n) => (
-            <div
-              key={n.id}
-              className="watch-item clickable"
-              onClick={() => setExpandedWatch(expandedWatch === n.id ? null : n.id)}
-            >
-              <div className="row" style={{ justifyContent: 'space-between' }}>
-                <span className="title">{n.title}</span>
-                <button
-                  className="ghost small"
-                  onClick={(e) => { e.stopPropagation(); dismissWatch(n.id); }}
-                >
-                  Done ✓
-                </button>
-              </div>
-              <div>
-                {n.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
-                {n.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
-              </div>
-              {expandedWatch === n.id && (
-                <div className="watch-detail small">
-                  {n.body ? <p style={{ whiteSpace: 'pre-wrap' }}>{n.body}</p>
-                          : <p className="muted">No details recorded.</p>}
-                  <p className="muted">recorded {fmtTs(n.created_at)}</p>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
+        <ToWatchSection refreshKey={refreshKey} />
 
         <div className="card">
           <h2>{viewingPast ? `News on ${dateParam}` : 'Today news'}</h2>
