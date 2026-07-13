@@ -118,7 +118,7 @@ export default function MarketPrepPage({ refreshKey }: { refreshKey: number }) {
           </div>
         </div>
 
-        <MacroSection refreshKey={refreshKey} />
+        <MacroSection refreshKey={refreshKey} date={dateParam} />
 
         <div className="card">
           <h2>Rate probabilities</h2>

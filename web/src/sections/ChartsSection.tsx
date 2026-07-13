@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, withParams, type AssetChart } from '../api';
 import CandleChart from '../components/CandleChart';
+import { SESSION_LEGEND } from '../components/sessionBands';
 
 interface ChartsResponse {
   charts: AssetChart[];
@@ -34,6 +35,17 @@ export default function ChartsSection({ timeframes, date }: Props) {
         </select>
       </div>
       {error && <p className="error">{error}</p>}
+      {data && data.charts.length > 0 && (
+        <div className="row small" style={{ marginBottom: 6 }}>
+          {[...new Map(data.charts[0].sessions.map((s) => [s.key, s])).values()].map((s) => (
+            <span key={s.key} className="muted">
+              <span className="legend-dot"
+                style={{ background: SESSION_LEGEND[s.key] ?? '#8b93a3', opacity: 0.6 }} />
+              {s.name}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="charts-grid">
         {data?.charts.map((c) => (
           <div key={c.asset} className="chart-box">

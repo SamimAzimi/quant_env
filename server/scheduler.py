@@ -1,6 +1,10 @@
 """APScheduler wiring: fire a Telegram alert at each session start/finish.
 
-Session boundaries come from config.sessions.DEFAULT_SESSIONS (UTC hours).
+Sessions come from libs/market_sessions.py: each major session's hours are
+local wall-clock in its own IANA timezone, and the cron triggers run in
+that timezone — so alert times shift automatically with DST, matching the
+session windows shown on the charts.
+
 Enabled when MARKET_PREP_ALERTS=1 (so dev servers and tests stay silent).
 """
 from __future__ import annotations
@@ -11,8 +15,9 @@ import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from config.sessions import DEFAULT_SESSIONS
+from libs.market_sessions import DEFAULT_SESSIONS as LIB_SESSIONS
 
+from .marketdata import MAJOR_SESSIONS
 from .telegram_alerts import send_session_alert
 
 logger = logging.getLogger(__name__)
@@ -24,13 +29,19 @@ def alerts_enabled() -> bool:
 
 def build_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="UTC")
-    for session, (start_h, end_h) in DEFAULT_SESSIONS.items():
+    for session in LIB_SESSIONS:
+        if session.name not in MAJOR_SESSIONS:
+            continue
         scheduler.add_job(
-            send_session_alert, CronTrigger(hour=start_h, minute=0),
-            args=[session, "start"], id=f"{session}-start",
+            send_session_alert,
+            CronTrigger(day_of_week="mon-fri", hour=session.open.hour,
+                        minute=session.open.minute, timezone=session.tz),
+            args=[session.name, "start"], id=f"{session.name}-start",
         )
         scheduler.add_job(
-            send_session_alert, CronTrigger(hour=end_h, minute=0),
-            args=[session, "finish"], id=f"{session}-finish",
+            send_session_alert,
+            CronTrigger(day_of_week="mon-fri", hour=session.close.hour,
+                        minute=session.close.minute, timezone=session.tz),
+            args=[session.name, "finish"], id=f"{session.name}-finish",
         )
     return scheduler

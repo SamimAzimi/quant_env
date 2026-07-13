@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { api, withParams, type ReturnsSeries } from '../api';
+import { api, withParams, type ReturnsSeries, type SessionSpan } from '../api';
 import ReturnsChart, { SERIES_COLORS } from '../components/ReturnsChart';
+import { SESSION_LEGEND } from '../components/sessionBands';
 
 interface Props {
   timeframes: string[];
@@ -14,6 +15,7 @@ export default function PreDayStats({ timeframes, available, defaults, date }: P
   const [tf, setTf] = useState('15m');
   const [selected, setSelected] = useState<string[]>(defaults);
   const [series, setSeries] = useState<ReturnsSeries[]>([]);
+  const [sessions, setSessions] = useState<SessionSpan[]>([]);
   const [error, setError] = useState('');
 
   useEffect(() => { setSelected(defaults); }, [defaults]);
@@ -21,9 +23,9 @@ export default function PreDayStats({ timeframes, available, defaults, date }: P
   useEffect(() => {
     if (selected.length === 0) { setSeries([]); return; }
     setError('');
-    api.get<{ series: ReturnsSeries[] }>(
+    api.get<{ series: ReturnsSeries[]; sessions: SessionSpan[] }>(
       withParams('/api/stats/returns', { tf, assets: selected.join(','), date }))
-      .then((r) => setSeries(r.series))
+      .then((r) => { setSeries(r.series); setSessions(r.sessions ?? []); })
       .catch((e) => setError(String(e)));
   }, [tf, selected, date]);
 
@@ -56,13 +58,21 @@ export default function PreDayStats({ timeframes, available, defaults, date }: P
       {error && <p className="error">{error}</p>}
       {series.length > 0 ? (
         <>
-          <ReturnsChart series={series} />
+          <ReturnsChart series={series} sessions={sessions} />
           <div className="row small" style={{ marginTop: 6 }}>
             {series.map((s, i) => (
               <span key={s.asset}>
                 <span className="legend-dot"
                   style={{ background: SERIES_COLORS[i % SERIES_COLORS.length] }} />
                 {s.asset}
+              </span>
+            ))}
+            <span className="muted">·</span>
+            {[...new Map(sessions.map((s) => [s.key, s])).values()].map((s) => (
+              <span key={s.key} className="muted">
+                <span className="legend-dot"
+                  style={{ background: SESSION_LEGEND[s.key] ?? '#8b93a3', opacity: 0.6 }} />
+                {s.name}
               </span>
             ))}
           </div>

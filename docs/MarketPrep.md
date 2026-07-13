@@ -62,16 +62,26 @@ TELEGRAM_ALERT_CHAT=@your_group      # or the numeric -100… group id
 The header carries a main menu: **Market Prep** (default) and **History**.
 
 "Yesterday" everywhere means the **trading-day window**: Tokyo session
-open → New York session close in UTC (00:00–21:00 with the default
-session config). Pre-day levels and log returns use this window too.
+open → New York session close. Sessions come from
+`libs/market_sessions.py` — local wall-clock hours per financial centre
+converted through the IANA tz database — so every window is DST-correct
+across all of history (the NY close is 21:00 UTC in summer, 22:00 in
+winter; London shifts 07:00↔08:00). The four major sessions (Sydney,
+Tokyo, London, New York) are shaded as background bands on the candle
+charts and the log-return chart, and the session high/low key levels are
+computed over exactly those shaded regions. Telegram session alerts fire
+on cron triggers in each centre's own timezone, so they shift with DST
+too.
 
 - **Market Prep** (default page) — a date picker in the page toolbar
   replays any past day: every section behaves as if that day were today.
   Sections:
   - *Sentiment*: Fear & Greed gauge + VIX, from readings recorded the
     **previous UTC day** (record today → shows tomorrow).
-  - *Macro*: economic reports grouped by country (expanded by default,
-    collapsible per country) with inline edit of Actual and Beat/Miss.
+  - *Macro*: the selected day's economic reports (plus still-pending
+    ones from earlier days when viewing today), grouped by country
+    (expanded by default, collapsible per country) with inline edit of
+    Actual and Beat/Miss.
   - *Rate probabilities*: latest recorded FedWatch table as bars — top 3
     buckets per meeting, the rest behind "see more…" — with the previous
     day's value marked for comparison.
@@ -94,7 +104,8 @@ session config). Pre-day levels and log returns use this window too.
   full related thread), recursive **story groups** (connected stories in
   the range, named after the earliest primary story) with an optional
   graph view (clickable nodes) and a news-on-candles view (pick timeframe
-  + asset; each story is pinned to the candle nearest its publish time);
+  + asset; each story is pinned to the candle nearest its publish time) —
+  every story shown in History is fully editable in place;
   VIX readings as a line chart; and the evolution of the nearest FOMC
   meeting's top rate buckets across recorded snapshots.
 - **Record** — the round **+** button (bottom-right, every page) opens an

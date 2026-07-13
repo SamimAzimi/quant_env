@@ -49,8 +49,10 @@ export interface RateProb { meeting_date: string; bucket: string; probability: n
 export interface RateSnapshot { id: number; captured_at: string; probs: RateProb[] }
 export interface Bar { time: number; open: number; high: number; low: number; close: number }
 export interface Level { label: string; kind: string; value: number }
+export interface SessionSpan { name: string; key: string; start: number; end: number }
 export interface AssetChart {
-  asset: string; timeframe: string; day: string; bars: Bar[]; levels: Level[];
+  asset: string; timeframe: string; day: string;
+  bars: Bar[]; levels: Level[]; sessions: SessionSpan[];
 }
 export interface ReturnsSeries {
   asset: string; day: string; points: { time: number; value: number }[];
