@@ -137,6 +137,25 @@ def last_trading_day(df: pd.DataFrame, today: date | None = None) -> date:
     return prior.iloc[-1]
 
 
+def common_trading_day(assets: list[str], tf: str,
+                       as_of: date | None = None) -> date | None:
+    """One shared day for a multi-asset view: the latest day *every*
+    available asset has data for (the minimum of per-asset last days).
+
+    This keeps weekend/holiday charts consistent: if one asset's data ends
+    Thursday while FX ran through Friday, every chart shows Thursday
+    rather than a mix of days.
+    """
+    days = []
+    for asset in assets:
+        try:
+            df = load_bars(asset, tf)
+            days.append(last_trading_day(df, as_of))
+        except (FileNotFoundError, ValueError):
+            continue
+    return min(days) if days else None
+
+
 def _day_slice(df: pd.DataFrame, day: date) -> pd.DataFrame:
     """Bars in the Tokyo-open → NY-close window of `day` (DST-correct)."""
     start, end = day_window(day)
@@ -177,11 +196,18 @@ def key_levels(df: pd.DataFrame, day: date) -> list[dict]:
     return levels
 
 
-def yesterday_chart(asset: str, tf: str = "15m", as_of: date | None = None) -> dict:
-    """Bars + key levels + session spans for the last completed trading day."""
+def yesterday_chart(asset: str, tf: str = "15m", as_of: date | None = None,
+                    day: date | None = None) -> dict:
+    """Bars + key levels + session spans for one trading day.
+
+    `day` pins an explicit day (the shared multi-asset day); otherwise the
+    asset's own last completed trading day before `as_of` is used.
+    """
     df = load_bars(asset, tf)
-    day = last_trading_day(df, as_of)
+    day = day or last_trading_day(df, as_of)
     bars = _day_slice(df, day)
+    if bars.empty:
+        raise ValueError(f"{asset} has no bars on {day}")
     return {
         "asset": asset,
         "timeframe": tf,
@@ -225,30 +251,33 @@ def bars_range(asset: str, tf: str, start: date, end: date) -> dict:
 
 def yesterday_log_returns(assets: list[str], tf: str = "15m",
                           as_of: date | None = None) -> dict:
-    """Cumulative intraday log returns over each asset's last trading day."""
+    """Cumulative intraday log returns over the assets' shared trading day.
+
+    All series use the same day (common_trading_day) so the lines are
+    comparable; assets without bars on that day are skipped.
+    """
+    day = common_trading_day(assets, tf, as_of)
     series = []
-    day = None
-    for asset in assets:
-        try:
-            df = load_bars(asset, tf)
-            asset_day = last_trading_day(df, as_of)
-        except (FileNotFoundError, ValueError):
-            continue
-        bars = _day_slice(df, asset_day)
-        if len(bars) < 2:
-            continue
-        day = day or asset_day
-        cum = np.log(bars["Close"]).diff().fillna(0.0).cumsum()
-        series.append({
-            "asset": asset,
-            "day": asset_day.isoformat(),
-            "points": [
-                {"time": int(t.timestamp()), "value": round(float(v) * 100, 4)}
-                for t, v in zip(bars["Datetime"], cum)
-            ],
-        })
+    if day is not None:
+        for asset in assets:
+            try:
+                bars = _day_slice(load_bars(asset, tf), day)
+            except FileNotFoundError:
+                continue
+            if len(bars) < 2:
+                continue
+            cum = np.log(bars["Close"]).diff().fillna(0.0).cumsum()
+            series.append({
+                "asset": asset,
+                "day": day.isoformat(),
+                "points": [
+                    {"time": int(t.timestamp()), "value": round(float(v) * 100, 4)}
+                    for t, v in zip(bars["Datetime"], cum)
+                ],
+            })
     return {
         "timeframe": tf,
         "series": series,
+        "day": day.isoformat() if day else None,
         "sessions": session_spans(day) if day else [],
     }

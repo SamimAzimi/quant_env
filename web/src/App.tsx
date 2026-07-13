@@ -20,12 +20,15 @@ export default function App() {
           <NavLink to="/" end>Market Prep</NavLink>
           <NavLink to="/history">History</NavLink>
         </nav>
-        <span className="date">
+        <span className="date" title={`frontend built ${__BUILD_TIME__} UTC`}>
           {new Date().toLocaleDateString('en-GB', {
             weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
             timeZone: 'UTC',
           })}{' '}
           UTC
+          <span className="muted" style={{ marginLeft: 8, fontSize: 11 }}>
+            build {__BUILD_TIME__}
+          </span>
         </span>
       </header>
 

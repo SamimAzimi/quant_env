@@ -7,14 +7,18 @@ interface Props {
 }
 
 const TOP_N = 3;
+const NEXT_MEETINGS = 2;
 
 /**
  * Grouped horizontal bars: per meeting, probability by rate bucket.
- * Only the top three buckets show by default — "see more…" reveals the
- * rest. The previous day's value appears as a marker on each bar.
+ * Only the next couple of meetings show by default ("show all meetings…"
+ * reveals the rest), and within each meeting only the top three buckets
+ * ("see more…" for the tail). The previous day's value appears as a
+ * marker on each bar.
  */
 export default function RateProbChart({ today, previous }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [allMeetings, setAllMeetings] = useState(false);
   if (!today) return <p className="muted">No rate table recorded yet. Use Record → FOMC.</p>;
 
   const toggle = (meeting: string) =>
@@ -24,7 +28,9 @@ export default function RateProbChart({ today, previous }: Props) {
       return next;
     });
 
-  const meetings = [...new Set(today.probs.map((p) => p.meeting_date))].sort();
+  const allSorted = [...new Set(today.probs.map((p) => p.meeting_date))].sort();
+  const meetings = allMeetings ? allSorted : allSorted.slice(0, NEXT_MEETINGS);
+  const hiddenMeetings = allSorted.length - meetings.length;
   const prevMap = new Map(
     (previous?.probs ?? []).map((p) => [`${p.meeting_date}|${p.bucket}`, p.probability]),
   );
@@ -81,6 +87,13 @@ export default function RateProbChart({ today, previous }: Props) {
           </div>
         );
       })}
+      {(hiddenMeetings > 0 || allMeetings) && (
+        <button className="seemore" onClick={() => setAllMeetings((v) => !v)}>
+          {allMeetings
+            ? 'show next meetings only'
+            : `show all meetings… (${hiddenMeetings} more)`}
+        </button>
+      )}
       {previous && (
         <div className="small muted">
           <span className="legend-dot" style={{ background: '#f0b429' }} />

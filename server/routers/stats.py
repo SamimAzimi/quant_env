@@ -32,13 +32,17 @@ def charts(tf: str = Query("15m"), assets: str | None = Query(None),
         raise HTTPException(422, f"Unknown timeframe {tf!r}")
     names = ([a.strip() for a in assets.split(",") if a.strip()]
              if assets else marketdata.CHART_ASSETS)
+    # one shared day so weekend/holiday charts stay consistent across assets
+    common = marketdata.common_trading_day(names, tf, as_of=date_)
     out, errors = [], {}
     for asset in names:
         try:
-            out.append(marketdata.yesterday_chart(asset, tf, as_of=date_))
+            out.append(marketdata.yesterday_chart(asset, tf, as_of=date_,
+                                                  day=common))
         except (FileNotFoundError, ValueError) as e:
             errors[asset] = str(e)
-    return {"charts": out, "errors": errors}
+    return {"charts": out, "day": common.isoformat() if common else None,
+            "errors": errors}
 
 
 @router.get("/bars")

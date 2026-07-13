@@ -34,7 +34,11 @@ export default function ReturnsChart({ series, sessions }: Props) {
       autoSize: true,
     });
     if (series.length > 0) {
-      addSessionBands(chart, series[0].points.map((p) => p.time), sessions ?? []);
+      // union of all series' timestamps: an index that only trades US hours
+      // must not limit where the Sydney/Tokyo/London bands can render
+      const times = [...new Set(series.flatMap((s) => s.points.map((p) => p.time)))]
+        .sort((a, b) => a - b);
+      addSessionBands(chart, times, sessions ?? []);
     }
     series.forEach((s, i) => {
       const line = chart.addSeries(LineSeries, {
