@@ -34,7 +34,16 @@ def _naive_utc(dt: datetime | None) -> datetime:
 
 
 def _prev_day(db: Session, model, as_of: date | None):
-    start, end = day_bounds(as_of_or_today(as_of) - timedelta(days=1))
+    """Readings for the "tomorrow" view: the day before the selected date
+    AND the selected date itself, newest first.
+
+    Prep data is usually recorded the evening before, but sometimes only
+    on the morning itself — so same-day recordings show too, and being
+    newer they win the top spot.
+    """
+    day = as_of_or_today(as_of)
+    start, _ = day_bounds(day - timedelta(days=1))
+    _, end = day_bounds(day)
     return (
         db.query(model)
         .filter(model.ts >= start, model.ts < end)

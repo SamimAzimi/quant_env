@@ -137,6 +137,9 @@ def test_migration_backfills_status_from_to_watch(tmp_path):
 
     cols = {c["name"] for c in inspect(db_mod.engine).get_columns("news")}
     assert {"status", "role", "publish_time", "source_id"} <= cols
+    # the retired to_watch column is dropped so strict-mode INSERTs
+    # (which no longer supply it) cannot fail with error 1364
+    assert "to_watch" not in cols
     with db_mod.engine.connect() as conn:
         rows = dict(conn.execute(
             text("SELECT title, status FROM news")).fetchall())
