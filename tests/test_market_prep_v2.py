@@ -105,12 +105,17 @@ def test_news_history_filters(client):
 def test_vix_history_and_prev_day_date_param(client):
     client.post("/api/vix", json={"value": 15.0, "ts": "2026-07-08T20:00:00Z"})
     client.post("/api/vix", json={"value": 17.5, "ts": "2026-07-09T20:00:00Z"})
+    client.post("/api/vix", json={"value": 19.0, "ts": "2026-07-10T08:00:00Z"})
 
     hist = client.get("/api/vix/history?start=2026-07-01&end=2026-07-31").json()
-    assert [h["value"] for h in hist] == [15.0, 17.5]
+    assert [h["value"] for h in hist] == [15.0, 17.5, 19.0]
 
+    # "tomorrow" view covers the previous day AND the selected day itself,
+    # newest first — a same-morning recording wins over last evening's
     prev = client.get("/api/vix/previous-day?date=2026-07-09").json()
-    assert [p["value"] for p in prev] == [15.0]
+    assert [p["value"] for p in prev] == [17.5, 15.0]
+    prev = client.get("/api/vix/previous-day?date=2026-07-10").json()
+    assert [p["value"] for p in prev] == [19.0, 17.5]
 
 
 def test_rate_probs_history_top_buckets(client):

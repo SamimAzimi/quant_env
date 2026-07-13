@@ -19,6 +19,13 @@ from . import models  # noqa: F401  — registers all tables on Base.metadata
 
 logger = logging.getLogger(__name__)
 
+# Columns the models no longer write. Left in place they break MySQL strict
+# mode (NOT NULL, no default → error 1364 on INSERT), so they are dropped
+# after their data has been backfilled into the replacement column.
+RETIRED_COLUMNS: list[tuple[str, str]] = [
+    ("news", "to_watch"),      # replaced by news.status (backfilled below)
+]
+
 
 def migrate(engine: Engine) -> None:
     Base.metadata.create_all(engine)   # new tables (and no-op for existing)
@@ -44,6 +51,18 @@ def migrate(engine: Engine) -> None:
                 added.add((table.name, column.name))
 
         _backfill_news(conn, inspector, added)
+
+        for table_name, column_name in RETIRED_COLUMNS:
+            existing = {c["name"] for c in inspector.get_columns(table_name)}
+            if column_name not in existing:
+                continue
+            ddl = f"ALTER TABLE {table_name} DROP COLUMN {column_name}"
+            logger.info("Migrating: %s", ddl)
+            try:
+                conn.execute(text(ddl))
+            except Exception:   # very old SQLite: neutralize instead
+                logger.warning("DROP COLUMN failed; leaving %s.%s in place",
+                               table_name, column_name)
 
 
 def _backfill_news(conn, inspector, added: set[tuple[str, str]]) -> None:
