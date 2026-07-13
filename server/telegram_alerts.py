@@ -15,7 +15,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
-from config.config import API_ID_NAJIB, API_HASH_NAJIB
+from config.config import API_ID_SAMIM_UZ, API_HASH_SAMIM_UZ
 from libs.market_sessions import DEFAULT_SESSIONS as LIB_SESSIONS, utc_offset_hours
 
 logger = logging.getLogger(__name__)
@@ -73,12 +73,12 @@ def format_session_message(session: str, event: str) -> str:
 async def send_alert(text: str) -> bool:
     """Send one message to the alert group. Returns False when unconfigured."""
     chat = _alert_chat()
-    if chat is None or not API_ID_NAJIB:
+    if chat is None or not API_ID_SAMIM_UZ:
         logger.warning("Telegram alerts not configured "
                        "(TELEGRAM_ALERT_CHAT / API credentials missing)")
         return False
     from telethon import TelegramClient
-    client = TelegramClient(ALERT_SESSION, API_ID_NAJIB, API_HASH_NAJIB)
+    client = TelegramClient(ALERT_SESSION, API_ID_SAMIM_UZ, API_HASH_SAMIM_UZ)
     async with client:
         await client.send_message(chat, text, parse_mode="md")
     return True

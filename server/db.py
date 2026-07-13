@@ -15,7 +15,7 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 DB_URL = os.environ.get(
     "MARKET_PREP_DB_URL",
-    "mysql+pymysql://root:root@localhost:3306/market_prep",
+    "mysql+pymysql://root:new_password@localhost:3306/market_prep",
 )
 
 _engine_kwargs = {"pool_pre_ping": True} if DB_URL.startswith("mysql") else {}
