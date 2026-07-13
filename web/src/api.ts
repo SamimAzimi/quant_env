@@ -76,6 +76,12 @@ export const api = {
     request<T>(url, { method: 'POST', body: JSON.stringify(body) }),
   patch: <T>(url: string, body: unknown) =>
     request<T>(url, { method: 'PATCH', body: JSON.stringify(body) }),
+  delete: async (url: string): Promise<void> => {
+    const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok) {
+      throw new Error(`${res.status} ${res.statusText}: ${await res.text().catch(() => '')}`);
+    }
+  },
 };
 
 /** Append query params, skipping empty values. */

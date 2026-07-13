@@ -15,6 +15,8 @@ function StoryNode({ node, depth, onEdit, onClose }: {
   onEdit: (n: NewsItem) => void;
   onClose: (id: number) => void;
 }) {
+  // collapsed by default at every nesting level; expanding reveals the
+  // story's details AND its related stories, which behave the same way
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="story-node" style={{ marginLeft: depth * 14 }}>
@@ -24,6 +26,7 @@ function StoryNode({ node, depth, onEdit, onClose }: {
       >
         <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}>
           <span className="title">
+            <span className="muted small">{expanded ? '▾' : '▸'} </span>
             {depth > 0 && (
               <span className="muted small" title={node.role}>
                 {ROLE_ICON[node.role] ?? '·'}{' '}
@@ -46,6 +49,9 @@ function StoryNode({ node, depth, onEdit, onClose }: {
           {node.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
           {node.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
           {depth > 0 && <span className="chip">{node.role}</span>}
+          {!expanded && node.children.length > 0 && (
+            <span className="chip">+{node.children.length} related</span>
+          )}
         </div>
         {expanded && (
           <div className="watch-detail small">
@@ -59,7 +65,7 @@ function StoryNode({ node, depth, onEdit, onClose }: {
           </div>
         )}
       </div>
-      {node.children.map((child) => (
+      {expanded && node.children.map((child) => (
         <StoryNode key={child.id} node={child} depth={depth + 1}
           onEdit={onEdit} onClose={onClose} />
       ))}

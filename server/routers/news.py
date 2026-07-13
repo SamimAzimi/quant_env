@@ -323,6 +323,20 @@ def thread(news_id: int, db: Session = Depends(get_db)):
     )
 
 
+@router.delete("/{news_id}", status_code=204)
+def delete_news(news_id: int, db: Session = Depends(get_db)):
+    """Remove a story and its links; related stories themselves survive."""
+    news = db.get(News, news_id)
+    if not news:
+        raise HTTPException(404, "News not found")
+    db.query(NewsRelationship).filter(
+        (NewsRelationship.parent_id == news_id)
+        | (NewsRelationship.child_id == news_id)
+    ).delete(synchronize_session=False)
+    db.delete(news)
+    db.commit()
+
+
 @router.patch("/{news_id}", response_model=NewsOut)
 def patch_news(news_id: int, payload: NewsPatch, db: Session = Depends(get_db)):
     news = db.get(News, news_id)

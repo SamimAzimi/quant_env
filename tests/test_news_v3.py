@@ -116,6 +116,23 @@ def test_patch_edits_fields_and_relationships(client):
     assert thread["parent_ids"] == [b["id"]]
 
 
+def test_delete_removes_story_and_links_but_keeps_relatives(client):
+    a = _mk(client, "Root", status="open")
+    b = _mk(client, "Middle", parent_ids=[a["id"]])
+    c = _mk(client, "Leaf", status="open", parent_ids=[b["id"]])
+
+    assert client.delete(f"/api/news/{b['id']}").status_code == 204
+    assert client.delete(f"/api/news/{b['id']}").status_code == 404
+
+    # relatives survive; the broken chain just unlinks them
+    root = client.get(f"/api/news/{a['id']}/thread").json()
+    assert root["tree"]["children"] == []
+    leaf = client.get(f"/api/news/{c['id']}/thread").json()
+    assert leaf["ancestors"] == [] and leaf["parent_ids"] == []
+    watch = {w["title"] for w in client.get("/api/news/watch").json()}
+    assert watch == {"Root", "Leaf"}
+
+
 def test_migration_backfills_status_from_to_watch(tmp_path):
     url = f"sqlite:///{tmp_path}/old.db"
     engine = create_engine(url)
