@@ -18,7 +18,26 @@ interface Props {
   chartAssets: string[];
 }
 
-function StoryDetail({ n, onEdit }: { n: NewsItem; onEdit: (n: NewsItem) => void }) {
+interface StoryActions {
+  onEdit: (n: NewsItem) => void;
+  onDelete: (n: NewsItem) => void;
+}
+
+function StoryButtons({ n, onEdit, onDelete }: { n: NewsItem } & StoryActions) {
+  return (
+    <span className="row" style={{ flexWrap: 'nowrap' }}>
+      <button className="ghost small" onClick={(e) => { e.stopPropagation(); onEdit(n); }}>
+        Edit
+      </button>
+      <button className="ghost small danger"
+        onClick={(e) => { e.stopPropagation(); onDelete(n); }}>
+        Delete
+      </button>
+    </span>
+  );
+}
+
+function StoryDetail({ n, onEdit, onDelete }: { n: NewsItem } & StoryActions) {
   return (
     <div className="news-item">
       <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}>
@@ -29,10 +48,40 @@ function StoryDetail({ n, onEdit }: { n: NewsItem; onEdit: (n: NewsItem) => void
           {n.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
           {n.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
         </span>
-        <button className="ghost small" onClick={() => onEdit(n)}>Edit</button>
+        <StoryButtons n={n} onEdit={onEdit} onDelete={onDelete} />
       </div>
       <div className="small muted">published {fmt(n.publish_time)}</div>
       {n.body && <div className="small">{n.body}</div>}
+    </div>
+  );
+}
+
+/** Range-list row: collapsed to one line, click to expand full details. */
+function HistoryRow({ n, onEdit, onDelete }: { n: NewsItem } & StoryActions) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="news-item clickable" onClick={() => setExpanded((v) => !v)}>
+      <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}>
+        <span>
+          <span className="muted small">{expanded ? '▾' : '▸'} {fmt(n.publish_time)}</span>{' '}
+          <span className="title">{n.title}</span>{' '}
+          <span className="chip">{n.role}</span>
+          {n.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
+          {n.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
+        </span>
+        <StoryButtons n={n} onEdit={onEdit} onDelete={onDelete} />
+      </div>
+      {expanded && (
+        <div className="watch-detail small">
+          {n.body
+            ? <p style={{ whiteSpace: 'pre-wrap' }}>{n.body}</p>
+            : <p className="muted">No details recorded.</p>}
+          <p className="muted">
+            {n.source && <>{n.source.name} · </>}
+            status {n.status} · recorded {fmt(n.created_at)}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -59,6 +108,14 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
   const [barsErr, setBarsErr] = useState('');
   const [editing, setEditing] = useState<NewsItem | null>(null);
   const [bump, setBump] = useState(0);
+
+  const deleteStory = async (n: NewsItem) => {
+    if (!window.confirm(`Delete "${n.title}"? Related stories stay.`)) return;
+    await api.delete(`/api/news/${n.id}`);
+    setSearchPick((p) => p.filter((s) => s.id !== n.id));
+    setSelected((s) => (s?.id === n.id ? null : s));
+    setBump((b) => b + 1);
+  };
 
   useEffect(() => {
     api.get<Tag[]>('/api/tags').then(setTags).catch(() => {});
@@ -131,9 +188,13 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
       />
       {thread && (
         <div className="thread-box">
-          {thread.ancestors.map((a) => <StoryDetail key={a.id} n={a} onEdit={setEditing} />)}
-          <StoryDetail n={thread.tree} onEdit={setEditing} />
-          {thread.tree.children.map((c) => <StoryDetail key={c.id} n={c} onEdit={setEditing} />)}
+          {thread.ancestors.map((a) => (
+            <StoryDetail key={a.id} n={a} onEdit={setEditing} onDelete={deleteStory} />
+          ))}
+          <StoryDetail n={thread.tree} onEdit={setEditing} onDelete={deleteStory} />
+          {thread.tree.children.map((c) => (
+            <StoryDetail key={c.id} n={c} onEdit={setEditing} onDelete={deleteStory} />
+          ))}
         </div>
       )}
 
@@ -171,7 +232,7 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
           {showGraph && (
             <StoryGraph group={group} onSelect={setSelected} selectedId={selected?.id} />
           )}
-          {selected && <StoryDetail n={selected} onEdit={setEditing} />}
+          {selected && <StoryDetail n={selected} onEdit={setEditing} onDelete={deleteStory} />}
 
           {asset && bars.length > 0 && (
             <NewsCandleChart bars={bars} news={group.news} />
@@ -182,7 +243,7 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
           {barsErr && <p className="error">{barsErr}</p>}
 
           {!showGraph && !selected && group.news.map((n) => (
-            <StoryDetail key={n.id} n={n} onEdit={setEditing} />
+            <StoryDetail key={n.id} n={n} onEdit={setEditing} onDelete={deleteStory} />
           ))}
         </div>
       )}
@@ -190,18 +251,7 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
       {!group && !thread && (
         <>
           {news.map((n) => (
-            <div key={n.id} className="news-item">
-              <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}>
-                <span>
-                  <span className="small muted">{fmt(n.publish_time)}</span>{' '}
-                  <span className="title">{n.title}</span>{' '}
-                  <span className="chip">{n.role}</span>
-                  {n.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
-                  {n.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
-                </span>
-                <button className="ghost small" onClick={() => setEditing(n)}>Edit</button>
-              </div>
-            </div>
+            <HistoryRow key={n.id} n={n} onEdit={setEditing} onDelete={deleteStory} />
           ))}
         </>
       )}

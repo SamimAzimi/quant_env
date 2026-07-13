@@ -119,6 +119,8 @@ button.primary {
 button.primary:disabled { opacity: 0.5; cursor: default; }
 button.ghost { background: transparent; cursor: pointer; }
 button.ghost:hover { border-color: var(--accent); }
+button.ghost.danger { color: var(--red); }
+button.ghost.danger:hover { border-color: var(--red); }
 
 .chip {
   display: inline-block;

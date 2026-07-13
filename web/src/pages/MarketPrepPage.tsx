@@ -18,6 +18,11 @@ interface StatsMeta {
 
 const fmtTs = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
 const todayIso = () => new Date().toISOString().slice(0, 10);
+const tomorrowIso = () => {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
 
 export default function MarketPrepPage({ refreshKey }: { refreshKey: number }) {
   // '' means live "today"; any other value replays that day.
@@ -63,7 +68,7 @@ export default function MarketPrepPage({ refreshKey }: { refreshKey: number }) {
           <span className="muted">Viewing date</span>
           <input
             type="date"
-            max={todayIso()}
+            max={tomorrowIso()}
             value={viewDate || todayIso()}
             onChange={(e) => setViewDate(e.target.value)}
           />
@@ -73,7 +78,11 @@ export default function MarketPrepPage({ refreshKey }: { refreshKey: number }) {
             ← Back to today
           </button>
         )}
-        <h1 className="page-title">Market Prep{viewingPast ? ` — ${dateParam}` : ''}</h1>
+        <h1 className="page-title">
+          Market Prep
+          {viewingPast &&
+            ` — ${dateParam}${dateParam === tomorrowIso() ? ' (tomorrow)' : ''}`}
+        </h1>
       </div>
 
       {yesterdayNews.length > 0 && (
