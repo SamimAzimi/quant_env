@@ -127,12 +127,25 @@ def record_econ_report(payload: EconReportIn, db: Session = Depends(get_db)):
 
 
 @router.get("/econ-reports", response_model=list[EconReportOut])
-def list_econ_reports(pending: bool = False, db: Session = Depends(get_db)):
-    """All recent reports; pending=true → only ones missing actual/outcome."""
-    q = db.query(EconReport)
+def list_econ_reports(date_: date | None = Query(None, alias="date"),
+                      pending: bool = False, db: Session = Depends(get_db)):
+    """Reports recorded on the selected day (default: today).
+
+    When viewing today, still-pending reports (no outcome yet) from earlier
+    days stay visible so nothing unreleased disappears before it's filled
+    in. pending=true → only reports missing an outcome, regardless of day.
+    """
     if pending:
-        q = q.filter(EconReport.outcome.is_(None))
-    return q.order_by(EconReport.created_at.desc()).limit(100).all()
+        return (db.query(EconReport).filter(EconReport.outcome.is_(None))
+                .order_by(EconReport.created_at.desc()).limit(100).all())
+    day = as_of_or_today(date_)
+    start, end = day_bounds(day)
+    cond = EconReport.created_at.between(start, end)
+    if day == as_of_or_today(None):    # live today: keep older pending ones
+        from sqlalchemy import or_
+        cond = or_(cond, EconReport.outcome.is_(None))
+    return (db.query(EconReport).filter(cond)
+            .order_by(EconReport.created_at.desc()).limit(100).all())
 
 
 @router.patch("/econ-reports/{report_id}", response_model=EconReportOut)

@@ -6,13 +6,16 @@ duplication into MySQL, per the chosen architecture.
 
 Provides:
   - the last completed trading day's bars per asset ("yesterday")
-  - key levels: pre-day high/low plus each FX session's high/low
+  - key levels: pre-day high/low plus each major session's high/low
+  - DST-accurate session spans (drawn as chart backgrounds)
   - cumulative log returns across yesterday for the Pre-day stats chart
 
-A "trading day" here is the Tokyo-open → New-York-close window in UTC
-(00:00–21:00 with the default config/sessions.py windows), not the full
-calendar day. Every endpoint accepts an as-of date so the website's date
-selector can replay any past day.
+Sessions come from libs/market_sessions.py: defined in local wall-clock
+time per financial centre, so every UTC footprint (backgrounds, session
+key levels, and the trading-day window itself) shifts correctly with DST
+across all of history. A "trading day" is Tokyo open → New York close for
+that specific date. Every endpoint accepts an as-of date so the website's
+date selector can replay any past day.
 """
 from __future__ import annotations
 
@@ -23,16 +26,22 @@ from functools import lru_cache
 import numpy as np
 import pandas as pd
 
-from config.config import MARKET_DATA_DIR, DEFAULT_SESSIONS
+from config.config import MARKET_DATA_DIR
 from libs.data_loader import load_csv
+from libs.market_sessions import DEFAULT_SESSIONS as LIB_SESSIONS, local_to_utc
 
 CHART_ASSETS = ["NDX", "XAUUSD", "XAGUSD", "USDJPY", "EURUSD"]
 TIMEFRAMES = ["5m", "15m", "30m", "1h", "2h", "4h"]
 
-# Trading-day window in UTC hours: Tokyo session open → New York session
-# close (00:00–21:00 by default). "Yesterday" always means this window.
-DAY_START_H = DEFAULT_SESSIONS["tokyo"][0]
-DAY_END_H = DEFAULT_SESSIONS["newyork"][1]
+# The four majors shown as chart backgrounds and session key levels.
+MAJOR_SESSIONS = ("Sydney", "Tokyo", "London", "NewYork")
+_SESSIONS = {s.name: s for s in LIB_SESSIONS if s.name in MAJOR_SESSIONS}
+
+_PRETTY = {"NewYork": "New York"}
+
+
+def _pretty(name: str) -> str:
+    return _PRETTY.get(name, name)
 
 
 def available_assets() -> list[str]:
@@ -64,6 +73,56 @@ def load_bars(asset: str, tf: str) -> pd.DataFrame:
     return _load(asset, tf, os.path.getmtime(path))
 
 
+# --------------------------------------------------------------------------
+# DST-aware session windows (all naive-UTC, matching the CSV timestamps)
+# --------------------------------------------------------------------------
+
+def _session_utc(name: str, anchor: date) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """One session's [open, close) as naive UTC for a local anchor date.
+
+    The session is defined in local wall-clock time, so converting each
+    anchor date separately applies that date's DST rules exactly.
+    """
+    s = _SESSIONS[name]
+    lo = local_to_utc(datetime.combine(anchor, s.open), s.tz)
+    hi = local_to_utc(datetime.combine(anchor, s.close), s.tz)
+    return lo.tz_localize(None), hi.tz_localize(None)
+
+
+def day_window(day: date) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """Trading day: Tokyo open → New York close of `day`, DST-correct."""
+    start, _ = _session_utc("Tokyo", day)
+    _, end = _session_utc("NewYork", day)
+    return start, end
+
+
+def session_spans(day: date) -> list[dict]:
+    """Each major session's UTC span(s) intersected with the trading day.
+
+    A session anchored on the previous local date (Sydney evening) can
+    reach into this trading day, so anchors day-1 .. day+1 are checked.
+    Weekend anchors are skipped, matching market_sessions semantics.
+    """
+    win_start, win_end = day_window(day)
+    spans = []
+    for name in MAJOR_SESSIONS:
+        for offset in (-1, 0, 1):
+            anchor = day + timedelta(days=offset)
+            if anchor.weekday() >= 5:      # Sat/Sun local anchor: closed
+                continue
+            lo, hi = _session_utc(name, anchor)
+            start, end = max(lo, win_start), min(hi, win_end)
+            if start < end:
+                spans.append({
+                    "name": _pretty(name),
+                    "key": name.lower(),
+                    "start": int(start.tz_localize("UTC").timestamp()),
+                    "end": int(end.tz_localize("UTC").timestamp()),
+                })
+    spans.sort(key=lambda s: s["start"])
+    return spans
+
+
 def last_trading_day(df: pd.DataFrame, today: date | None = None) -> date:
     """Most recent trading day with bars strictly before `today` (UTC).
 
@@ -79,22 +138,17 @@ def last_trading_day(df: pd.DataFrame, today: date | None = None) -> date:
 
 
 def _day_slice(df: pd.DataFrame, day: date) -> pd.DataFrame:
-    """Bars in the Tokyo-open → NY-close window of `day`."""
-    start = pd.Timestamp(day) + pd.Timedelta(hours=DAY_START_H)
-    end = pd.Timestamp(day) + pd.Timedelta(hours=DAY_END_H)
+    """Bars in the Tokyo-open → NY-close window of `day` (DST-correct)."""
+    start, end = day_window(day)
     return df[(df["Datetime"] >= start) & (df["Datetime"] < end)]
-
-
-def _session_windows() -> dict[str, tuple[int, int]]:
-    return dict(DEFAULT_SESSIONS)
 
 
 def key_levels(df: pd.DataFrame, day: date) -> list[dict]:
     """Pre-day H/L and per-session H/L for the charted day.
 
-    Sessions come from config.sessions.DEFAULT_SESSIONS (UTC hour windows);
-    a window with start > end wraps midnight and is anchored on the day it
-    starts, extending into the next day's early bars.
+    Session windows come from libs/market_sessions.py (local wall-clock ×
+    IANA tz), so the exact same regions shaded on the chart produce the
+    session high/low levels.
     """
     levels: list[dict] = []
 
@@ -102,29 +156,29 @@ def key_levels(df: pd.DataFrame, day: date) -> list[dict]:
     prior = [d for d in days if d < day]
     if prior:
         pre = _day_slice(df, prior[-1])
-        levels.append({"label": "Pre-day High", "kind": "preday", "value": float(pre["High"].max())})
-        levels.append({"label": "Pre-day Low", "kind": "preday", "value": float(pre["Low"].min())})
+        if not pre.empty:
+            levels.append({"label": "Pre-day High", "kind": "preday",
+                           "value": float(pre["High"].max())})
+            levels.append({"label": "Pre-day Low", "kind": "preday",
+                           "value": float(pre["Low"].min())})
 
-    day_start = pd.Timestamp(day)
-    for name, (start_h, end_h) in _session_windows().items():
-        start = day_start + pd.Timedelta(hours=start_h)
-        if start_h > end_h:  # wraps midnight (e.g. Sydney 21→06)
-            end = day_start + pd.Timedelta(days=1, hours=end_h)
-        else:
-            end = day_start + pd.Timedelta(hours=end_h)
-        window = df[(df["Datetime"] >= start) & (df["Datetime"] < end)]
+    for span in session_spans(day):
+        lo = pd.Timestamp(span["start"], unit="s")
+        hi = pd.Timestamp(span["end"], unit="s")
+        window = df[(df["Datetime"] >= lo) & (df["Datetime"] < hi)]
         if window.empty:
             continue
-        pretty = name.capitalize().replace("Newyork", "New York")
-        levels.append({"label": f"{pretty} High", "kind": f"session:{name}",
+        levels.append({"label": f"{span['name']} High",
+                       "kind": f"session:{span['key']}",
                        "value": float(window["High"].max())})
-        levels.append({"label": f"{pretty} Low", "kind": f"session:{name}",
+        levels.append({"label": f"{span['name']} Low",
+                       "kind": f"session:{span['key']}",
                        "value": float(window["Low"].min())})
     return levels
 
 
 def yesterday_chart(asset: str, tf: str = "15m", as_of: date | None = None) -> dict:
-    """Bars + key levels for the last completed trading day before `as_of`."""
+    """Bars + key levels + session spans for the last completed trading day."""
     df = load_bars(asset, tf)
     day = last_trading_day(df, as_of)
     bars = _day_slice(df, day)
@@ -143,6 +197,7 @@ def yesterday_chart(asset: str, tf: str = "15m", as_of: date | None = None) -> d
             for row in bars.itertuples()
         ],
         "levels": key_levels(df, day),
+        "sessions": session_spans(day),
     }
 
 
@@ -172,22 +227,28 @@ def yesterday_log_returns(assets: list[str], tf: str = "15m",
                           as_of: date | None = None) -> dict:
     """Cumulative intraday log returns over each asset's last trading day."""
     series = []
+    day = None
     for asset in assets:
         try:
             df = load_bars(asset, tf)
-            day = last_trading_day(df, as_of)
+            asset_day = last_trading_day(df, as_of)
         except (FileNotFoundError, ValueError):
             continue
-        bars = _day_slice(df, day)
+        bars = _day_slice(df, asset_day)
         if len(bars) < 2:
             continue
+        day = day or asset_day
         cum = np.log(bars["Close"]).diff().fillna(0.0).cumsum()
         series.append({
             "asset": asset,
-            "day": day.isoformat(),
+            "day": asset_day.isoformat(),
             "points": [
                 {"time": int(t.timestamp()), "value": round(float(v) * 100, 4)}
                 for t, v in zip(bars["Datetime"], cum)
             ],
         })
-    return {"timeframe": tf, "series": series}
+    return {
+        "timeframe": tf,
+        "series": series,
+        "sessions": session_spans(day) if day else [],
+    }

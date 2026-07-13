@@ -1,19 +1,25 @@
 import { useEffect, useState } from 'react';
-import { api, type EconReport } from '../api';
+import { api, withParams, type EconReport } from '../api';
 
-/** Economic reports grouped by country (expanded by default, collapsible),
- *  with inline edit of Actual and Beat/Miss. */
-export default function MacroSection({ refreshKey }: { refreshKey: number }) {
+interface Props {
+  refreshKey: number;
+  date: string;   // '' = today
+}
+
+/** The selected day's economic reports (plus still-pending ones when viewing
+ *  today), grouped by country — expanded by default, collapsible — with
+ *  inline edit of Actual and Beat/Miss. */
+export default function MacroSection({ refreshKey, date }: Props) {
   const [reports, setReports] = useState<EconReport[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [error, setError] = useState('');
 
   const load = () =>
-    api.get<EconReport[]>('/api/econ-reports')
+    api.get<EconReport[]>(withParams('/api/econ-reports', { date }))
       .then(setReports)
       .catch((e) => setError(String(e)));
 
-  useEffect(() => { load(); }, [refreshKey]);
+  useEffect(() => { load(); }, [refreshKey, date]);
 
   const update = async (id: number, patch: Partial<EconReport>) => {
     await api.patch(`/api/econ-reports/${id}`, patch);

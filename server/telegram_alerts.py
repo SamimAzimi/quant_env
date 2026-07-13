@@ -16,18 +16,20 @@ import os
 from datetime import datetime, timezone
 
 from config.config import API_ID_NAJIB, API_HASH_NAJIB
-from config.sessions import DEFAULT_SESSIONS
+from libs.market_sessions import DEFAULT_SESSIONS as LIB_SESSIONS, utc_offset_hours
 
 logger = logging.getLogger(__name__)
 
 ALERT_SESSION = os.environ.get("TELEGRAM_ALERT_SESSION", "alerts_session")
 
 _SESSION_EMOJI = {
-    "sydney": "🇦🇺",
-    "tokyo": "🇯🇵",
-    "london": "🇬🇧",
-    "newyork": "🇺🇸",
+    "Sydney": "🇦🇺",
+    "Tokyo": "🇯🇵",
+    "London": "🇬🇧",
+    "NewYork": "🇺🇸",
 }
+
+_SESSIONS = {s.name: s for s in LIB_SESSIONS}
 
 
 def _alert_chat() -> int | str | None:
@@ -41,21 +43,29 @@ def _alert_chat() -> int | str | None:
 
 
 def _pretty(name: str) -> str:
-    return name.capitalize().replace("Newyork", "New York")
+    return "New York" if name == "NewYork" else name
 
 
 def format_session_message(session: str, event: str) -> str:
-    """A compact, visual session banner (Markdown)."""
-    start_h, end_h = DEFAULT_SESSIONS[session]
+    """A compact, visual session banner (Markdown).
+
+    Session hours are local wall-clock (libs/market_sessions.py); the UTC
+    offset shown is the centre's offset right now, so it is DST-correct.
+    """
+    s = _SESSIONS[session]
     emoji = _SESSION_EMOJI.get(session, "🕐")
     icon = "🟢 OPEN" if event == "start" else "🔴 CLOSE"
-    now = datetime.now(timezone.utc).strftime("%H:%M UTC")
+    now_utc = datetime.now(timezone.utc)
+    now = now_utc.strftime("%H:%M UTC")
+    offset = utc_offset_hours(now_utc.replace(tzinfo=None), s.tz)
+    sign = "+" if offset >= 0 else "−"
     bar = "─" * 22
     return (
         f"{emoji} **{_pretty(session)} session {icon}**\n"
         f"{bar}\n"
         f"🕐 Now: `{now}`\n"
-        f"📅 Window: `{start_h:02d}:00 → {end_h:02d}:00 UTC`\n"
+        f"📅 Window: `{s.open.strftime('%H:%M')} → {s.close.strftime('%H:%M')} "
+        f"local (UTC{sign}{abs(offset):g})`\n"
         f"{bar}"
     )
 

@@ -3,16 +3,17 @@ import {
   CandlestickSeries, ColorType, LineStyle, createChart,
 } from 'lightweight-charts';
 import type { AssetChart } from '../api';
+import { addSessionBands, SESSION_LEGEND } from './sessionBands';
 
 const LEVEL_COLORS: Record<string, string> = {
   preday: '#f0b429',
-  'session:sydney': '#ab47bc',
-  'session:tokyo': '#ef5350',
-  'session:london': '#4f8ff7',
-  'session:newyork': '#26a69a',
+  'session:sydney': SESSION_LEGEND.sydney,
+  'session:tokyo': SESSION_LEGEND.tokyo,
+  'session:london': SESSION_LEGEND.london,
+  'session:newyork': SESSION_LEGEND.newyork,
 };
 
-/** Candlestick chart of yesterday's bars with key-level price lines. */
+/** Candles with key-level price lines and session-span backgrounds. */
 export default function CandleChart({ data }: { data: AssetChart }) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -32,6 +33,7 @@ export default function CandleChart({ data }: { data: AssetChart }) {
       rightPriceScale: { borderColor: '#2a3140' },
       autoSize: true,
     });
+    addSessionBands(chart, data.bars.map((b) => b.time), data.sessions ?? []);
     const series = chart.addSeries(CandlestickSeries, {
       upColor: '#26a69a', downColor: '#ef5350',
       wickUpColor: '#26a69a', wickDownColor: '#ef5350',

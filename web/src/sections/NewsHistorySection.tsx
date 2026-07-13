@@ -5,6 +5,7 @@ import {
   type Tag,
 } from '../api';
 import NewsCandleChart from '../components/NewsCandleChart';
+import NewsEditOverlay from '../components/NewsEditOverlay';
 import NewsSearchPicker from '../components/NewsSearchPicker';
 import StoryGraph from '../components/StoryGraph';
 
@@ -17,14 +18,19 @@ interface Props {
   chartAssets: string[];
 }
 
-function StoryDetail({ n }: { n: NewsItem }) {
+function StoryDetail({ n, onEdit }: { n: NewsItem; onEdit: (n: NewsItem) => void }) {
   return (
     <div className="news-item">
-      <span className="title">{n.title}</span>{' '}
-      <span className="chip">{n.role}</span>
-      {n.source && <span className="chip">{n.source.name}</span>}
-      {n.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
-      {n.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
+      <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}>
+        <span>
+          <span className="title">{n.title}</span>{' '}
+          <span className="chip">{n.role}</span>
+          {n.source && <span className="chip">{n.source.name}</span>}
+          {n.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
+          {n.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
+        </span>
+        <button className="ghost small" onClick={() => onEdit(n)}>Edit</button>
+      </div>
       <div className="small muted">published {fmt(n.publish_time)}</div>
       {n.body && <div className="small">{n.body}</div>}
     </div>
@@ -51,20 +57,30 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
   const [asset, setAsset] = useState('');
   const [bars, setBars] = useState<Bar[]>([]);
   const [barsErr, setBarsErr] = useState('');
+  const [editing, setEditing] = useState<NewsItem | null>(null);
+  const [bump, setBump] = useState(0);
 
   useEffect(() => {
     api.get<Tag[]>('/api/tags').then(setTags).catch(() => {});
     api.get<AssetCategory[]>('/api/effects').then(setCategories).catch(() => {});
   }, []);
 
-  useEffect(() => {
+  const loadLists = () => {
     api.get<NewsItem[]>(withParams('/api/news/history', {
       start, end, tag_id: tagFilter, effect_id: effectFilter,
     })).then(setNews).catch(() => {});
     api.get<NewsGroup[]>(withParams('/api/news/groups', { start, end }))
-      .then((g) => { setGroups(g); setGroupIdx(null); setSelected(null); })
-      .catch(() => {});
+      .then(setGroups).catch(() => {});
+  };
+
+  // range/filter changes reset the selection; edits (bump) just reload
+  useEffect(() => {
+    setGroupIdx(null);
+    setSelected(null);
+    loadLists();
   }, [start, end, tagFilter, effectFilter]);
+
+  useEffect(() => { if (bump > 0) loadLists(); }, [bump]);
 
   // selecting a search result loads its full thread
   useEffect(() => {
@@ -72,7 +88,7 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
     if (!pick) { setThread(null); return; }
     api.get<NewsThread>(`/api/news/${pick.id}/thread`)
       .then(setThread).catch(() => setThread(null));
-  }, [searchPick]);
+  }, [searchPick, bump]);
 
   const group = groupIdx !== null ? groups[groupIdx] : null;
 
@@ -115,9 +131,9 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
       />
       {thread && (
         <div className="thread-box">
-          {thread.ancestors.map((a) => <StoryDetail key={a.id} n={a} />)}
-          <StoryDetail n={thread.tree} />
-          {thread.tree.children.map((c) => <StoryDetail key={c.id} n={c} />)}
+          {thread.ancestors.map((a) => <StoryDetail key={a.id} n={a} onEdit={setEditing} />)}
+          <StoryDetail n={thread.tree} onEdit={setEditing} />
+          {thread.tree.children.map((c) => <StoryDetail key={c.id} n={c} onEdit={setEditing} />)}
         </div>
       )}
 
@@ -155,7 +171,7 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
           {showGraph && (
             <StoryGraph group={group} onSelect={setSelected} selectedId={selected?.id} />
           )}
-          {selected && <StoryDetail n={selected} />}
+          {selected && <StoryDetail n={selected} onEdit={setEditing} />}
 
           {asset && bars.length > 0 && (
             <NewsCandleChart bars={bars} news={group.news} />
@@ -165,7 +181,9 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
           )}
           {barsErr && <p className="error">{barsErr}</p>}
 
-          {!showGraph && !selected && group.news.map((n) => <StoryDetail key={n.id} n={n} />)}
+          {!showGraph && !selected && group.news.map((n) => (
+            <StoryDetail key={n.id} n={n} onEdit={setEditing} />
+          ))}
         </div>
       )}
 
@@ -173,14 +191,27 @@ export default function NewsHistorySection({ start, end, timeframes, chartAssets
         <>
           {news.map((n) => (
             <div key={n.id} className="news-item">
-              <span className="small muted">{fmt(n.publish_time)}</span>{' '}
-              <span className="title">{n.title}</span>{' '}
-              <span className="chip">{n.role}</span>
-              {n.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
-              {n.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
+              <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'nowrap' }}>
+                <span>
+                  <span className="small muted">{fmt(n.publish_time)}</span>{' '}
+                  <span className="title">{n.title}</span>{' '}
+                  <span className="chip">{n.role}</span>
+                  {n.effects.map((e) => <span key={e.id} className="chip effect">{e.ticker}</span>)}
+                  {n.tags.map((t) => <span key={t.id} className="chip tag">{t.name}</span>)}
+                </span>
+                <button className="ghost small" onClick={() => setEditing(n)}>Edit</button>
+              </div>
             </div>
           ))}
         </>
+      )}
+
+      {editing && (
+        <NewsEditOverlay
+          news={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => setBump((b) => b + 1)}
+        />
       )}
     </div>
   );
