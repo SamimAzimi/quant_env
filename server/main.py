@@ -18,7 +18,9 @@ from fastapi.staticfiles import StaticFiles
 
 from .db import SessionLocal, engine
 from .migrate import migrate
-from .routers import alerts, meta, news, rate_probs, records, stats, trades
+from .routers import (
+    alerts, asset_stats, meta, news, rate_probs, records, stats, trades,
+)
 from .scheduler import alerts_enabled, build_scheduler
 from .seed import seed
 
@@ -50,6 +52,7 @@ app.add_middleware(
 )
 
 app.include_router(alerts.router)
+app.include_router(asset_stats.router)
 app.include_router(meta.router)
 app.include_router(news.router)
 app.include_router(trades.router)

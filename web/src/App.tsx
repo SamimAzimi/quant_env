@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
 import AlertBell from './components/AlertBell';
 import RecordOverlay from './components/RecordOverlay';
+import AssetStatsPage from './pages/AssetStatsPage';
 import HistoryPage from './pages/HistoryPage';
 import MarketPrepPage from './pages/MarketPrepPage';
 
@@ -22,6 +23,7 @@ export default function App() {
         <nav className="main-nav">
           <NavLink to="/" end>Market Prep</NavLink>
           <NavLink to="/history">History</NavLink>
+          <NavLink to="/asset-stats">Asset Stats</NavLink>
         </nav>
         <span className="date" title={`frontend built ${__BUILD_TIME__} UTC`}>
           {new Date().toLocaleDateString('en-GB', {
@@ -38,6 +40,7 @@ export default function App() {
 
       <Routes>
         <Route path="/history" element={<HistoryPage />} />
+        <Route path="/asset-stats" element={<AssetStatsPage />} />
         <Route path="*" element={<MarketPrepPage refreshKey={refreshKey} />} />
       </Routes>
 
@@ -48,6 +51,7 @@ export default function App() {
         <div className="nav-menu" onClick={() => setNavOpen(false)}>
           <NavLink to="/" end>Market Prep</NavLink>
           <NavLink to="/history">History</NavLink>
+          <NavLink to="/asset-stats">Asset Stats</NavLink>
         </div>
       )}
 
