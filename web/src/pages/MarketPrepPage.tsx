@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   api, withParams, type NewsItem, type RateSnapshot, type Reading,
 } from '../api';
@@ -21,6 +21,11 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const tomorrowIso = () => {
   const d = new Date();
   d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
+const shiftIso = (iso: string, days: number) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 };
 
@@ -61,8 +66,26 @@ export default function MarketPrepPage({ refreshKey }: { refreshKey: number }) {
 
   const viewingPast = dateParam !== '';
 
+  // horizontal swipe: right → previous day, left → next day (max tomorrow)
+  const touch = useRef<{ x: number; y: number } | null>(null);
+  const shiftDay = (days: number) => {
+    const next = shiftIso(viewDate || todayIso(), days);
+    if (next > tomorrowIso()) return;
+    setViewDate(next === todayIso() ? '' : next);
+  };
+  const onTouchStart = (e: React.TouchEvent) => {
+    touch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (!touch.current) return;
+    const dx = e.changedTouches[0].clientX - touch.current.x;
+    const dy = e.changedTouches[0].clientY - touch.current.y;
+    touch.current = null;
+    if (Math.abs(dx) > 70 && Math.abs(dy) < 50) shiftDay(dx > 0 ? -1 : 1);
+  };
+
   return (
-    <main className="page">
+    <main className="page" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       <div className="page-toolbar">
         <label className="row small">
           <span className="muted">Viewing date</span>

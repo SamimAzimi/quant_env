@@ -217,6 +217,25 @@ class EconReportOut(OrmModel):
     created_at: datetime
 
 
+# --- alerts ----------------------------------------------------------------
+
+class AlertIn(BaseModel):
+    due_time: datetime            # client sends UTC (converted from local)
+    message: str = Field(min_length=1)
+
+
+class AlertPatch(BaseModel):
+    due_time: Optional[datetime] = None
+    message: Optional[str] = None
+
+
+class AlertOut(OrmModel):
+    id: int
+    due_time: datetime
+    message: str
+    created_at: datetime
+
+
 # --- rate probabilities ---------------------------------------------------
 
 class RateTableIn(BaseModel):

@@ -84,6 +84,24 @@ export const api = {
   },
 };
 
+export interface AlertItem {
+  id: number; due_time: string; message: string; created_at: string;
+}
+
+const pad = (n: number) => String(n).padStart(2, '0');
+
+/** Stored UTC ISO → value for a datetime-local input in the browser's zone. */
+export function utcToLocalInput(iso: string): string {
+  const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** datetime-local value (browser's zone) → UTC ISO for the API. */
+export function localInputToUtc(value: string): string {
+  return new Date(value).toISOString();
+}
+
 /** Append query params, skipping empty values. */
 export function withParams(url: string, params: Record<string, string>): string {
   const q = Object.entries(params)

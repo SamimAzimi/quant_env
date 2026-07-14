@@ -1,13 +1,16 @@
 import { useState } from 'react';
 import { NavLink, Route, Routes } from 'react-router-dom';
+import AlertBell from './components/AlertBell';
 import RecordOverlay from './components/RecordOverlay';
 import HistoryPage from './pages/HistoryPage';
 import MarketPrepPage from './pages/MarketPrepPage';
 
-// New pages: add a <Route> plus a nav link. The Record FAB lives outside
-// the router so it stays visible on every page.
+// New pages: add a <Route> plus a nav link (and one in the mobile menu).
+// The Record FAB and nav FAB live outside the router so they stay visible
+// on every page.
 export default function App() {
   const [recordOpen, setRecordOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const onSaved = () => setRefreshKey((k) => k + 1);
@@ -30,12 +33,23 @@ export default function App() {
             build {__BUILD_TIME__}
           </span>
         </span>
+        <AlertBell refreshKey={refreshKey} />
       </header>
 
       <Routes>
         <Route path="/history" element={<HistoryPage />} />
         <Route path="*" element={<MarketPrepPage refreshKey={refreshKey} />} />
       </Routes>
+
+      <button className="fab nav-fab" aria-label="Menu" onClick={() => setNavOpen((v) => !v)}>
+        ☰
+      </button>
+      {navOpen && (
+        <div className="nav-menu" onClick={() => setNavOpen(false)}>
+          <NavLink to="/" end>Market Prep</NavLink>
+          <NavLink to="/history">History</NavLink>
+        </div>
+      )}
 
       <button className="fab" aria-label="Record" onClick={() => setRecordOpen(true)}>
         +

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .db import SessionLocal, engine
 from .migrate import migrate
-from .routers import meta, news, rate_probs, records, stats, trades
+from .routers import alerts, meta, news, rate_probs, records, stats, trades
 from .scheduler import alerts_enabled, build_scheduler
 from .seed import seed
 
@@ -32,14 +32,12 @@ async def lifespan(app: FastAPI):
     migrate(engine)   # create missing tables and additive columns
     with SessionLocal() as db:
         seed(db)
-    scheduler = None
-    if alerts_enabled():
-        scheduler = build_scheduler()
-        scheduler.start()
-        logger.info("Session-alert scheduler started")
+    # user-alert dispatch always runs; session banners are opt-in
+    scheduler = build_scheduler(session_banners=alerts_enabled())
+    scheduler.start()
+    logger.info("Scheduler started (session banners: %s)", alerts_enabled())
     yield
-    if scheduler:
-        scheduler.shutdown(wait=False)
+    scheduler.shutdown(wait=False)
 
 
 app = FastAPI(title="Market Preparation", lifespan=lifespan)
@@ -51,6 +49,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(alerts.router)
 app.include_router(meta.router)
 app.include_router(news.router)
 app.include_router(trades.router)

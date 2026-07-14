@@ -170,6 +170,16 @@ class Thought(Base):
     body = Column(Text, nullable=False)
 
 
+class Alert(Base):
+    """A one-shot reminder: sent to the Telegram alert chat at due_time
+    (UTC) and deleted once delivered."""
+    __tablename__ = "alerts"
+    id = Column(Integer, primary_key=True)
+    due_time = Column(DateTime, nullable=False)            # UTC
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
 class RateSnapshot(Base):
     """One recorded FedWatch-style probability table."""
     __tablename__ = "rate_snapshots"
