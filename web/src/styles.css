@@ -39,6 +39,43 @@ body {
 .app-header h1 { font-size: 18px; margin: 0; }
 .app-header .date { color: var(--muted); font-size: 13px; margin-left: auto; }
 
+/* Alert bell (upper right) */
+.bell-wrap { position: relative; margin-left: 10px; }
+.bell {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  position: relative;
+  padding: 4px 6px;
+}
+.bell-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  background: var(--red);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 5px;
+}
+.bell-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(340px, 92vw);
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  z-index: 100;
+}
+.bell-item { padding: 8px; border-top: 1px solid var(--border); }
+.bell-item input, .bell-item textarea { width: 100%; margin-bottom: 6px; }
+
 .main-nav { display: flex; gap: 4px; margin-left: 12px; }
 .main-nav a {
   color: var(--muted);
@@ -159,6 +196,45 @@ button.ghost.danger:hover { border-color: var(--red); }
   justify-content: center;
 }
 .fab:hover { filter: brightness(1.1); }
+
+/* Mobile navigation: hamburger FAB bottom-left, mirroring the Record FAB */
+.fab.nav-fab {
+  display: none;
+  left: 20px;
+  right: auto;
+  font-size: 24px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.nav-menu {
+  position: fixed;
+  left: 20px;
+  bottom: 90px;
+  z-index: 65;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  overflow: hidden;
+}
+.nav-menu a {
+  color: var(--text);
+  text-decoration: none;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.nav-menu a:last-child { border-bottom: none; }
+.nav-menu a.active { color: var(--accent); font-weight: 600; }
+
+@media (max-width: 700px) {
+  .main-nav { display: none; }
+  .fab.nav-fab { display: flex; }
+  .app-header .date { display: none; }
+}
 
 /* --- record overlay ------------------------------------------------------- */
 

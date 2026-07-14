@@ -35,9 +35,11 @@ function StoryNode({ node, depth, onEdit, onClose }: {
             {node.title}
           </span>
           <span className="row" style={{ flexWrap: 'nowrap' }}>
-            <button className="ghost small" onClick={(e) => { e.stopPropagation(); onEdit(node); }}>
-              Edit
-            </button>
+            {depth === 0 && (
+              <button className="ghost small" onClick={(e) => { e.stopPropagation(); onEdit(node); }}>
+                Edit
+              </button>
+            )}
             {node.status === 'open' && (
               <button className="ghost small" onClick={(e) => { e.stopPropagation(); onClose(node.id); }}>
                 Done ✓

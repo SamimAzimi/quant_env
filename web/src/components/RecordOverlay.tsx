@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import AlertTab from './tabs/AlertTab';
 import EconTab from './tabs/EconTab';
 import FearGreedTab from './tabs/FearGreedTab';
 import NewsTab from './tabs/NewsTab';
@@ -15,6 +16,7 @@ const TABS = [
   'Fear & Greed',
   'Economic Reports',
   'FOMC',
+  'Alert',
 ] as const;
 
 interface Props {
@@ -47,6 +49,7 @@ export default function RecordOverlay({ onClose, onSaved }: Props) {
           {tab === 'Fear & Greed' && <FearGreedTab onSaved={onSaved} />}
           {tab === 'Economic Reports' && <EconTab onSaved={onSaved} />}
           {tab === 'FOMC' && <RateTab onSaved={onSaved} />}
+          {tab === 'Alert' && <AlertTab onSaved={onSaved} />}
         </div>
       </div>
     </div>

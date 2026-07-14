@@ -96,7 +96,8 @@ def _tree(news: News, children: dict[int, set[int]],
         if cid in by_id and cid not in seen
     ]
     node = NewsTreeOut.model_validate(news)
-    node.children = sorted(kids, key=lambda k: k.publish_time)
+    # newest follow-ups first under their parent story
+    node.children = sorted(kids, key=lambda k: k.publish_time, reverse=True)
     return node
 
 
