@@ -88,6 +88,69 @@ export interface AlertItem {
   id: number; due_time: string; message: string; created_at: string;
 }
 
+// --- asset statistics ---
+export interface DistStats {
+  n: number;
+  note?: string;
+  mean?: number;
+  std?: number;
+  skew?: number;
+  bands?: { up1: number; up2: number; dn1: number; dn2: number };
+  probs?: {
+    p_up: number; p_gt_1sd: number; p_gt_2sd: number;
+    p_lt_1sd: number; p_lt_2sd: number;
+  };
+  hist?: { edges: number[]; counts: number[] };
+}
+export interface CleanStats {
+  n: number;
+  eff_mean: number | null;
+  eff_median: number | null;
+  mae_sd_mean: number | null;
+  bars_mean: number | null;
+}
+export interface SideStats {
+  n_days: number;
+  n_breakout: number;
+  n_target: number;
+  p_breakout: number | null;
+  p_target: number | null;
+  p_target_given_breakout: number | null;
+  clean: CleanStats;
+}
+export interface Transition {
+  reference: string;
+  trigger: string;
+  overnight: boolean;
+  note?: string;
+  ref_mean?: number;
+  ref_std?: number;
+  bands?: { up1: number; up2: number; dn1: number; dn2: number };
+  up?: SideStats;
+  down?: SideStats;
+}
+export interface DayToDay {
+  n: number;
+  p_next_up?: number;
+  p_next_gt_1sd?: number;
+  p_next_lt_1sd?: number;
+  mean_next?: number;
+}
+export interface DailyStudy extends DistStats {
+  intraday?: { up: SideStats; down: SideStats };
+  day_to_day?: { after_up_1sd: DayToDay; after_down_1sd: DayToDay };
+}
+export interface AssetStatsReport {
+  asset: string;
+  timeframe: string;
+  n_bars: number;
+  n_days: number;
+  date_range: [string, string];
+  sessions: Record<string, DistStats>;
+  transitions: Transition[];
+  daily: DailyStudy;
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** Stored UTC ISO → value for a datetime-local input in the browser's zone. */

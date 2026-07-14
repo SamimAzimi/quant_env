@@ -59,7 +59,8 @@ TELEGRAM_ALERT_CHAT=@your_group      # or the numeric -100… group id
 
 ## Pages & data flow
 
-The header carries a main menu: **Market Prep** (default) and **History**.
+The header carries a main menu: **Market Prep** (default), **History**, and
+**Asset Stats**.
 
 "Yesterday" everywhere means the **trading-day window**: Tokyo session
 open → New York session close. Sessions come from
@@ -108,6 +109,24 @@ too.
   every story shown in History is fully editable in place;
   VIX readings as a line chart; and the evolution of the nearest FOMC
   meeting's top rate buckets across recorded snapshots.
+- **Asset Stats** — pick a ticker and an intraday timeframe; the backend
+  (`server/asset_stats.py`) studies every trading day of history and returns:
+  - *Session return distributions* for Tokyo, London, New York, and the
+    full trading day — histogram with μ and ±1σ/±2σ band lines, plus skew
+    and empirical tail probabilities. Session return = `ln(close/open)`.
+  - *Session transitions* (Tokyo→London, London→New York, New York→London
+    overnight): the reference session's return distribution sets ±1σ/±2σ
+    bands; the card shows, up and down, P(the trigger session closes beyond
+    ±1σ), P(it reaches the reference ±2σ), and the key conditional
+    **P(reach 2σ | breakout)** — plus "clean move" quality for the 1σ→2σ
+    segment: path efficiency `|net| / Σ|bar move|`, mean adverse excursion
+    (in σ), and bar count. Everything is on a cumulative-log-return axis
+    anchored at the reference session's open; sessions are DST-correct
+    (`libs/market_sessions.py`).
+  - *Day-over-day*: the daily return distribution and bands, the intraday
+    continuation (P(2σ | closed beyond 1σ) and cleanliness anchored at the
+    day open), and the day-to-day conditional transition (given the
+    previous day closed beyond ±1σ, what the current day does).
 - **Record** — the round **+** button (bottom-right, every page) opens an
   overlay with tabs: News (title, details, role — primary / supporting /
   contradicting / duplicate / update —, source with inline add, publish
