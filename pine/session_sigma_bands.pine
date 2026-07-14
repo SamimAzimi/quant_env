@@ -1,26 +1,30 @@
 //@version=6
 // =============================================================================
-// Session σ-Bands & Breakouts
+// Session σ-Bands (live behaviour overlay)
 // -----------------------------------------------------------------------------
-// Mirrors the "Asset Stats -> session transitions" study on a TradingView chart.
+// Draw each session's ±1σ / ±2σ bands on the chart and WATCH how price behaves
+// against them — the same way on history and on the live bar.
 //
-// For each ordered pair (reference session -> trigger session):
+// For an ordered pair (reference -> trigger):
 //   * the REFERENCE session's log return  r = ln(close/open)  is collected over
-//     history into a running distribution -> mean (mu) and std (sigma);
-//   * bands are anchored at the reference session's OPEN price:
-//         +1s = open*exp(mu+sigma)   +2s = open*exp(mu+2sigma)   (and -1s,-2s);
-//   * when the TRIGGER session closes, its close is compared to those bands.
-//     The trigger session box is shaded green if it closed above +1sigma
-//     (brighter if above +2sigma), red if below -1sigma (brighter below -2sigma).
+//     a rolling history into  mean (mu)  and  std (sigma);
+//   * bands are anchored at that reference session's OPEN price:
+//         +1σ = open*exp(mu+sigma)   +2σ = open*exp(mu+2sigma)   (and -1σ,-2σ);
+//   * those bands are then SHOWN LIVE across the following TRIGGER session, so
+//     you see, bar by bar, whether price holds inside, pokes past ±1σ, or
+//     extends to ±2σ.
+//
+// The bands are CAUSAL and NON-REPAINTING: each session's mu/sigma uses only
+// prior completed sessions, and a band level is fixed the moment the reference
+// session closes — so what you see historically is exactly what you'd have had
+// live. Bars are tinted while price closes beyond a band, and a triangle marks
+// the first close beyond ±1σ within a trigger session (the behavioural event).
 //
 // Pairs:  Tokyo -> London,  London -> New York,  New York -> London (overnight).
-// Only sessions against each other -- no current/previous-day study.
-//
-// Use an INTRADAY timeframe (5m .. 4h). Sessions are defined in each centre's
-// own timezone, so TradingView applies DST automatically.
+// Use an INTRADAY timeframe (5m .. 4h). Sessions are in each centre's own
+// timezone, so TradingView applies DST automatically.
 // =============================================================================
-indicator("Session σ-Bands & Breakouts", overlay = true,
-     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+indicator("Session σ-Bands (live)", overlay = true)
 
 if not timeframe.isintraday
     runtime.error("Use an intraday timeframe (< 1D) — sessions need sub-daily bars.")
@@ -38,20 +42,19 @@ grpM = "Distribution"
 lookback   = input.int(250, "Rolling window (sessions, per type)", minval = 20, group = grpM)
 minSamples = input.int(30,  "Min sessions before drawing bands",   minval = 2,  group = grpM)
 
-grpP = "Transitions to show"
-showTL = input.bool(true, "Tokyo → London",            group = grpP)
-showLN = input.bool(true, "London → New York",         group = grpP)
-showNL = input.bool(true, "New York → London (overnight)", group = grpP)
+grpP = "Which reference frame to overlay"
+showTL = input.bool(true,  "Tokyo → London",             group = grpP)
+showLN = input.bool(true,  "London → New York",          group = grpP)
+showNL = input.bool(false, "New York → London (overnight)", group = grpP)
 
-grpD = "Drawing"
-showBands  = input.bool(true, "Band lines across trigger", group = grpD)
-showBoxes  = input.bool(true, "Shade breakout sessions",   group = grpD)
-showLabels = input.bool(true, "Labels",                    group = grpD)
-onlyBreak  = input.bool(true, "Only shade when it closed beyond ±1σ", group = grpD)
+grpD = "Behaviour highlighting"
+shadeZones = input.bool(true, "Shade ±1σ→±2σ zones",         group = grpD)
+colorBars  = input.bool(true, "Tint bars closed beyond ±1σ", group = grpD)
+markCross  = input.bool(true, "Mark first close beyond ±1σ", group = grpD)
 
-colTL = input.color(color.new(color.blue,   0), "Tokyo→London colour",   group = grpD)
-colLN = input.color(color.new(color.orange, 0), "London→NY colour",      group = grpD)
-colNL = input.color(color.new(color.purple, 0), "NY→London colour",      group = grpD)
+colTL = input.color(color.blue,   "Tokyo→London colour", group = grpD)
+colLN = input.color(color.orange, "London→NY colour",    group = grpD)
+colNL = input.color(color.purple, "NY→London colour",    group = grpD)
 
 // ----------------------------- session state ---------------------------------
 type Sess
@@ -59,34 +62,29 @@ type Sess
     float hi    = na
     float lo    = na
     float lastC = na
-    int   startT = na
-    bool  closed = false
     array<float> rets
-    float mean = na
-    float sd   = na
+    float mean  = na
+    float sd    = na
+    bool  closed = false
 
-// Update one session's running OHLC + finalize its return when it closes.
-// inNow is passed in (time() needs simple-string args, so it is computed at the
-// top level, not inside the method).
+// time() needs simple-string args, so in-session booleans are computed at the
+// top level and passed in.
 method step(Sess s, bool inNow) =>
     s.closed := false
     if inNow and not inNow[1]
-        // first bar of the session
-        s.openP  := open
-        s.hi     := high
-        s.lo     := low
-        s.lastC  := close
-        s.startT := time
+        s.openP := open
+        s.hi    := high
+        s.lo    := low
+        s.lastC := close
     else if inNow
         s.hi    := math.max(s.hi, high)
         s.lo    := math.min(s.lo, low)
         s.lastC := close
     if inNow[1] and not inNow
-        // session completed on the previous bar
         nprior = array.size(s.rets)
         if nprior >= 2
             s.mean := array.avg(s.rets)
-            s.sd   := array.stdev(s.rets, false)     // sample std (ddof=1)
+            s.sd   := array.stdev(s.rets, false)   // sample std (ddof=1)
         r = math.log(s.lastC / s.openP)
         if not na(r)
             array.push(s.rets, r)
@@ -106,92 +104,115 @@ tokyo.step(tkIn)
 london.step(lnIn)
 ny.step(nyIn)
 
-// ------------------------------ transitions ----------------------------------
-type Pair
-    string tag
-    color  col
-    bool   overnight
-    bool   armed = false
-    float  rOpen = na
-    float  up1 = na
-    float  up2 = na
-    float  dn1 = na
-    float  dn2 = na
-    int    armT   = na
-    int    refEnd = na
+// ------------------------------ bands ----------------------------------------
+type Band
+    float up1 = na
+    float up2 = na
+    float dn1 = na
+    float dn2 = na
+    bool  active  = false
+    bool  firstUp = false
+    bool  firstDn = false
 
-// Arm bands when the reference session closes; evaluate + draw when the trigger
-// session closes.
-method run(Pair p, Sess refS, Sess trigS) =>
-    // arm
+// Arm bands when the reference closes; disarm after the trigger closes; reset
+// the first-cross flags when the trigger session begins.
+method update(Band b, Sess refS, Sess trigS, bool trigIn) =>
     if refS.closed and not na(refS.mean) and not na(refS.sd) and array.size(refS.rets) >= minSamples
-        p.rOpen  := refS.openP
-        p.up1    := refS.openP * math.exp(refS.mean + refS.sd)
-        p.up2    := refS.openP * math.exp(refS.mean + 2.0 * refS.sd)
-        p.dn1    := refS.openP * math.exp(refS.mean - refS.sd)
-        p.dn2    := refS.openP * math.exp(refS.mean - 2.0 * refS.sd)
-        p.armed  := true
-        p.armT   := time
-        p.refEnd := time[1]
-    // expire a stale arm (trigger session never showed up)
-    holdMs = (p.overnight ? 2 : 1) * 24 * 60 * 60 * 1000
-    if p.armed and (time - p.armT) > holdMs
-        p.armed := false
-    // evaluate
-    if p.armed and trigS.closed
-        tC   = trigS.lastC
-        endT = time[1]
-        up   = tC > p.up1
-        up2f = tC > p.up2
-        dn   = tC < p.dn1
-        dn2f = tC < p.dn2
-        broke = up or dn
+        b.up1 := refS.openP * math.exp(refS.mean + refS.sd)
+        b.up2 := refS.openP * math.exp(refS.mean + 2.0 * refS.sd)
+        b.dn1 := refS.openP * math.exp(refS.mean - refS.sd)
+        b.dn2 := refS.openP * math.exp(refS.mean - 2.0 * refS.sd)
+        b.active := true
+    if trigIn and not trigIn[1]
+        b.firstUp := false
+        b.firstDn := false
+    if b.active and trigS.closed
+        b.active := false
 
-        if showBoxes and (broke or not onlyBreak)
-            bcol = up2f ? color.new(color.teal, 55) :
-                   up   ? color.new(color.teal, 82) :
-                   dn2f ? color.new(color.red,  55) :
-                   dn   ? color.new(color.red,  82) :
-                          color.new(color.gray, 90)
-            box.new(trigS.startT, trigS.hi, endT, trigS.lo, xloc = xloc.bar_time,
-                 border_color = color.new(p.col, 40), bgcolor = bcol)
+var bTL = Band.new()
+var bLN = Band.new()
+var bNL = Band.new()
 
-        if showBands
-            line.new(p.refEnd, p.up2, endT, p.up2, xloc = xloc.bar_time,
-                 color = color.new(color.teal, 20), width = 1)
-            line.new(p.refEnd, p.up1, endT, p.up1, xloc = xloc.bar_time,
-                 color = color.new(color.teal, 40), style = line.style_dashed)
-            line.new(p.refEnd, p.dn1, endT, p.dn1, xloc = xloc.bar_time,
-                 color = color.new(color.red, 40), style = line.style_dashed)
-            line.new(p.refEnd, p.dn2, endT, p.dn2, xloc = xloc.bar_time,
-                 color = color.new(color.red, 20), width = 1)
+bTL.update(tokyo,  london, lnIn)
+bLN.update(london, ny,     nyIn)
+bNL.update(ny,     london, lnIn)
 
-        if showLabels and broke
-            txt = p.tag + (up2f ? " ▲+2σ" : up ? " ▲+1σ" : dn2f ? " ▼−2σ" : " ▼−1σ")
-            label.new(endT, up ? trigS.hi : trigS.lo, txt, xloc = xloc.bar_time,
-                 style = up ? label.style_label_down : label.style_label_up,
-                 color = color.new(p.col, 15), textcolor = color.white, size = size.tiny)
+// A band is drawn only WHILE its trigger session is live (that is the window
+// where you watch behaviour). Gate each level accordingly.
+tlOn = showTL and bTL.active and lnIn
+lnOn = showLN and bLN.active and nyIn
+nlOn = showNL and bNL.active and lnIn
 
-var pTL = Pair.new("TK→LN", colTL, false)
-var pLN = Pair.new("LN→NY", colLN, false)
-var pNL = Pair.new("NY→LN", colNL, true)
+tl_u1 = tlOn ? bTL.up1 : na
+tl_u2 = tlOn ? bTL.up2 : na
+tl_d1 = tlOn ? bTL.dn1 : na
+tl_d2 = tlOn ? bTL.dn2 : na
+ln_u1 = lnOn ? bLN.up1 : na
+ln_u2 = lnOn ? bLN.up2 : na
+ln_d1 = lnOn ? bLN.dn1 : na
+ln_d2 = lnOn ? bLN.dn2 : na
+nl_u1 = nlOn ? bNL.up1 : na
+nl_u2 = nlOn ? bNL.up2 : na
+nl_d1 = nlOn ? bNL.dn1 : na
+nl_d2 = nlOn ? bNL.dn2 : na
 
-if showTL
-    pTL.run(tokyo, london)
-if showLN
-    pLN.run(london, ny)
-if showNL
-    pNL.run(ny, london)
+// ------------------------------ plots ----------------------------------------
+BR = plot.style_linebr
+p_tl_u1 = plot(tl_u1, "TK→LN +1σ", color.new(colTL, 45), 1, BR)
+p_tl_u2 = plot(tl_u2, "TK→LN +2σ", color.new(colTL, 20), 1, BR)
+p_tl_d1 = plot(tl_d1, "TK→LN −1σ", color.new(colTL, 45), 1, BR)
+p_tl_d2 = plot(tl_d2, "TK→LN −2σ", color.new(colTL, 20), 1, BR)
+p_ln_u1 = plot(ln_u1, "LN→NY +1σ", color.new(colLN, 45), 1, BR)
+p_ln_u2 = plot(ln_u2, "LN→NY +2σ", color.new(colLN, 20), 1, BR)
+p_ln_d1 = plot(ln_d1, "LN→NY −1σ", color.new(colLN, 45), 1, BR)
+p_ln_d2 = plot(ln_d2, "LN→NY −2σ", color.new(colLN, 20), 1, BR)
+p_nl_u1 = plot(nl_u1, "NY→LN +1σ", color.new(colNL, 45), 1, BR)
+p_nl_u2 = plot(nl_u2, "NY→LN +2σ", color.new(colNL, 20), 1, BR)
+p_nl_d1 = plot(nl_d1, "NY→LN −1σ", color.new(colNL, 45), 1, BR)
+p_nl_d2 = plot(nl_d2, "NY→LN −2σ", color.new(colNL, 20), 1, BR)
 
-// -------- small info panel: latest reference distributions -------------------
-var table tb = table.new(position.top_right, 2, 4, border_width = 1)
-f_pct(x) => str.tostring(x * 100.0, "#.##") + "%"
-if barstate.islast
-    table.cell(tb, 0, 0, "session", text_color = color.gray, text_size = size.tiny)
-    table.cell(tb, 1, 0, "μ / σ (ln ret)", text_color = color.gray, text_size = size.tiny)
-    table.cell(tb, 0, 1, "Tokyo",  text_color = color.white, text_size = size.tiny)
-    table.cell(tb, 1, 1, na(tokyo.mean)  ? "—" : f_pct(tokyo.mean)  + " / " + f_pct(tokyo.sd),  text_color = color.white, text_size = size.tiny)
-    table.cell(tb, 0, 2, "London", text_color = color.white, text_size = size.tiny)
-    table.cell(tb, 1, 2, na(london.mean) ? "—" : f_pct(london.mean) + " / " + f_pct(london.sd), text_color = color.white, text_size = size.tiny)
-    table.cell(tb, 0, 3, "New York", text_color = color.white, text_size = size.tiny)
-    table.cell(tb, 1, 3, na(ny.mean)     ? "—" : f_pct(ny.mean)     + " / " + f_pct(ny.sd),     text_color = color.white, text_size = size.tiny)
+zoneUp = shadeZones ? color.new(color.teal, 88) : na
+zoneDn = shadeZones ? color.new(color.red,  88) : na
+fill(p_tl_u1, p_tl_u2, zoneUp, "TK→LN +σ zone")
+fill(p_tl_d1, p_tl_d2, zoneDn, "TK→LN −σ zone")
+fill(p_ln_u1, p_ln_u2, zoneUp, "LN→NY +σ zone")
+fill(p_ln_d1, p_ln_d2, zoneDn, "LN→NY −σ zone")
+fill(p_nl_u1, p_nl_u2, zoneUp, "NY→LN +σ zone")
+fill(p_nl_d1, p_nl_d2, zoneDn, "NY→LN −σ zone")
+
+// ------------------------ behaviour highlighting -----------------------------
+// Bars tinted while price closes beyond ANY active band (bright beyond ±2σ).
+up2Now = (tlOn and close > bTL.up2) or (lnOn and close > bLN.up2) or (nlOn and close > bNL.up2)
+up1Now = (tlOn and close > bTL.up1) or (lnOn and close > bLN.up1) or (nlOn and close > bNL.up1)
+dn2Now = (tlOn and close < bTL.dn2) or (lnOn and close < bLN.dn2) or (nlOn and close < bNL.dn2)
+dn1Now = (tlOn and close < bTL.dn1) or (lnOn and close < bLN.dn1) or (nlOn and close < bNL.dn1)
+barCol = up2Now ? color.new(color.teal, 0)  :
+         up1Now ? color.new(color.teal, 55) :
+         dn2Now ? color.new(color.red, 0)   :
+         dn1Now ? color.new(color.red, 55)  : na
+barcolor(colorBars ? barCol : na, title = "Beyond-band bars")
+
+// First close beyond ±1σ within each trigger session (the behavioural event).
+f_firstUp(Band b, bool on) =>
+    sig = on and close > b.up1 and not b.firstUp
+    if sig
+        b.firstUp := true
+    sig
+f_firstDn(Band b, bool on) =>
+    sig = on and close < b.dn1 and not b.firstDn
+    if sig
+        b.firstDn := true
+    sig
+
+tlXu = f_firstUp(bTL, tlOn), tlXd = f_firstDn(bTL, tlOn)
+lnXu = f_firstUp(bLN, lnOn), lnXd = f_firstDn(bLN, lnOn)
+nlXu = f_firstUp(bNL, nlOn), nlXd = f_firstDn(bNL, nlOn)
+
+plotshape(markCross and (tlXu or lnXu or nlXu), "▲ broke +1σ",
+     shape.triangleup, location.belowbar, color.teal, size = size.tiny)
+plotshape(markCross and (tlXd or lnXd or nlXd), "▼ broke −1σ",
+     shape.triangledown, location.abovebar, color.red, size = size.tiny)
+
+// Alerts so you can react live.
+alertcondition(tlXu or lnXu or nlXu, "Close beyond +1σ", "Price closed beyond a session +1σ band")
+alertcondition(tlXd or lnXd or nlXd, "Close beyond −1σ", "Price closed beyond a session −1σ band")
