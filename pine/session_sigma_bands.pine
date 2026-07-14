@@ -1,0 +1,197 @@
+//@version=6
+// =============================================================================
+// Session σ-Bands & Breakouts
+// -----------------------------------------------------------------------------
+// Mirrors the "Asset Stats -> session transitions" study on a TradingView chart.
+//
+// For each ordered pair (reference session -> trigger session):
+//   * the REFERENCE session's log return  r = ln(close/open)  is collected over
+//     history into a running distribution -> mean (mu) and std (sigma);
+//   * bands are anchored at the reference session's OPEN price:
+//         +1s = open*exp(mu+sigma)   +2s = open*exp(mu+2sigma)   (and -1s,-2s);
+//   * when the TRIGGER session closes, its close is compared to those bands.
+//     The trigger session box is shaded green if it closed above +1sigma
+//     (brighter if above +2sigma), red if below -1sigma (brighter below -2sigma).
+//
+// Pairs:  Tokyo -> London,  London -> New York,  New York -> London (overnight).
+// Only sessions against each other -- no current/previous-day study.
+//
+// Use an INTRADAY timeframe (5m .. 4h). Sessions are defined in each centre's
+// own timezone, so TradingView applies DST automatically.
+// =============================================================================
+indicator("Session σ-Bands & Breakouts", overlay = true,
+     max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+if not timeframe.isintraday
+    runtime.error("Use an intraday timeframe (< 1D) — sessions need sub-daily bars.")
+
+// ----------------------------- inputs ----------------------------------------
+grpS = "Sessions (local wall-clock, DST via timezone)"
+tkSess = input.session("0900-1800", "Tokyo hours",     group = grpS)
+tkTz   = input.string ("Asia/Tokyo", "Tokyo timezone", group = grpS)
+lnSess = input.session("0800-1700", "London hours",    group = grpS)
+lnTz   = input.string ("Europe/London", "London timezone", group = grpS)
+nySess = input.session("0800-1700", "New York hours",  group = grpS)
+nyTz   = input.string ("America/New_York", "New York timezone", group = grpS)
+
+grpM = "Distribution"
+lookback   = input.int(250, "Rolling window (sessions, per type)", minval = 20, group = grpM)
+minSamples = input.int(30,  "Min sessions before drawing bands",   minval = 2,  group = grpM)
+
+grpP = "Transitions to show"
+showTL = input.bool(true, "Tokyo → London",            group = grpP)
+showLN = input.bool(true, "London → New York",         group = grpP)
+showNL = input.bool(true, "New York → London (overnight)", group = grpP)
+
+grpD = "Drawing"
+showBands  = input.bool(true, "Band lines across trigger", group = grpD)
+showBoxes  = input.bool(true, "Shade breakout sessions",   group = grpD)
+showLabels = input.bool(true, "Labels",                    group = grpD)
+onlyBreak  = input.bool(true, "Only shade when it closed beyond ±1σ", group = grpD)
+
+colTL = input.color(color.new(color.blue,   0), "Tokyo→London colour",   group = grpD)
+colLN = input.color(color.new(color.orange, 0), "London→NY colour",      group = grpD)
+colNL = input.color(color.new(color.purple, 0), "NY→London colour",      group = grpD)
+
+// ----------------------------- session state ---------------------------------
+type Sess
+    float openP = na
+    float hi    = na
+    float lo    = na
+    float lastC = na
+    int   startT = na
+    bool  closed = false
+    array<float> rets
+    float mean = na
+    float sd   = na
+
+// Update one session's running OHLC + finalize its return when it closes.
+// inNow is passed in (time() needs simple-string args, so it is computed at the
+// top level, not inside the method).
+method step(Sess s, bool inNow) =>
+    s.closed := false
+    if inNow and not inNow[1]
+        // first bar of the session
+        s.openP  := open
+        s.hi     := high
+        s.lo     := low
+        s.lastC  := close
+        s.startT := time
+    else if inNow
+        s.hi    := math.max(s.hi, high)
+        s.lo    := math.min(s.lo, low)
+        s.lastC := close
+    if inNow[1] and not inNow
+        // session completed on the previous bar
+        nprior = array.size(s.rets)
+        if nprior >= 2
+            s.mean := array.avg(s.rets)
+            s.sd   := array.stdev(s.rets, false)     // sample std (ddof=1)
+        r = math.log(s.lastC / s.openP)
+        if not na(r)
+            array.push(s.rets, r)
+            if array.size(s.rets) > lookback
+                array.shift(s.rets)
+        s.closed := true
+
+var tokyo  = Sess.new(rets = array.new<float>())
+var london = Sess.new(rets = array.new<float>())
+var ny     = Sess.new(rets = array.new<float>())
+
+tkIn = not na(time(timeframe.period, tkSess, tkTz))
+lnIn = not na(time(timeframe.period, lnSess, lnTz))
+nyIn = not na(time(timeframe.period, nySess, nyTz))
+
+tokyo.step(tkIn)
+london.step(lnIn)
+ny.step(nyIn)
+
+// ------------------------------ transitions ----------------------------------
+type Pair
+    string tag
+    color  col
+    bool   overnight
+    bool   armed = false
+    float  rOpen = na
+    float  up1 = na
+    float  up2 = na
+    float  dn1 = na
+    float  dn2 = na
+    int    armT   = na
+    int    refEnd = na
+
+// Arm bands when the reference session closes; evaluate + draw when the trigger
+// session closes.
+method run(Pair p, Sess refS, Sess trigS) =>
+    // arm
+    if refS.closed and not na(refS.mean) and not na(refS.sd) and array.size(refS.rets) >= minSamples
+        p.rOpen  := refS.openP
+        p.up1    := refS.openP * math.exp(refS.mean + refS.sd)
+        p.up2    := refS.openP * math.exp(refS.mean + 2.0 * refS.sd)
+        p.dn1    := refS.openP * math.exp(refS.mean - refS.sd)
+        p.dn2    := refS.openP * math.exp(refS.mean - 2.0 * refS.sd)
+        p.armed  := true
+        p.armT   := time
+        p.refEnd := time[1]
+    // expire a stale arm (trigger session never showed up)
+    holdMs = (p.overnight ? 2 : 1) * 24 * 60 * 60 * 1000
+    if p.armed and (time - p.armT) > holdMs
+        p.armed := false
+    // evaluate
+    if p.armed and trigS.closed
+        tC   = trigS.lastC
+        endT = time[1]
+        up   = tC > p.up1
+        up2f = tC > p.up2
+        dn   = tC < p.dn1
+        dn2f = tC < p.dn2
+        broke = up or dn
+
+        if showBoxes and (broke or not onlyBreak)
+            bcol = up2f ? color.new(color.teal, 55) :
+                   up   ? color.new(color.teal, 82) :
+                   dn2f ? color.new(color.red,  55) :
+                   dn   ? color.new(color.red,  82) :
+                          color.new(color.gray, 90)
+            box.new(trigS.startT, trigS.hi, endT, trigS.lo, xloc = xloc.bar_time,
+                 border_color = color.new(p.col, 40), bgcolor = bcol)
+
+        if showBands
+            line.new(p.refEnd, p.up2, endT, p.up2, xloc = xloc.bar_time,
+                 color = color.new(color.teal, 20), width = 1)
+            line.new(p.refEnd, p.up1, endT, p.up1, xloc = xloc.bar_time,
+                 color = color.new(color.teal, 40), style = line.style_dashed)
+            line.new(p.refEnd, p.dn1, endT, p.dn1, xloc = xloc.bar_time,
+                 color = color.new(color.red, 40), style = line.style_dashed)
+            line.new(p.refEnd, p.dn2, endT, p.dn2, xloc = xloc.bar_time,
+                 color = color.new(color.red, 20), width = 1)
+
+        if showLabels and broke
+            txt = p.tag + (up2f ? " ▲+2σ" : up ? " ▲+1σ" : dn2f ? " ▼−2σ" : " ▼−1σ")
+            label.new(endT, up ? trigS.hi : trigS.lo, txt, xloc = xloc.bar_time,
+                 style = up ? label.style_label_down : label.style_label_up,
+                 color = color.new(p.col, 15), textcolor = color.white, size = size.tiny)
+
+var pTL = Pair.new("TK→LN", colTL, false)
+var pLN = Pair.new("LN→NY", colLN, false)
+var pNL = Pair.new("NY→LN", colNL, true)
+
+if showTL
+    pTL.run(tokyo, london)
+if showLN
+    pLN.run(london, ny)
+if showNL
+    pNL.run(ny, london)
+
+// -------- small info panel: latest reference distributions -------------------
+var table tb = table.new(position.top_right, 2, 4, border_width = 1)
+f_pct(x) => str.tostring(x * 100.0, "#.##") + "%"
+if barstate.islast
+    table.cell(tb, 0, 0, "session", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 0, "μ / σ (ln ret)", text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 0, 1, "Tokyo",  text_color = color.white, text_size = size.tiny)
+    table.cell(tb, 1, 1, na(tokyo.mean)  ? "—" : f_pct(tokyo.mean)  + " / " + f_pct(tokyo.sd),  text_color = color.white, text_size = size.tiny)
+    table.cell(tb, 0, 2, "London", text_color = color.white, text_size = size.tiny)
+    table.cell(tb, 1, 2, na(london.mean) ? "—" : f_pct(london.mean) + " / " + f_pct(london.sd), text_color = color.white, text_size = size.tiny)
+    table.cell(tb, 0, 3, "New York", text_color = color.white, text_size = size.tiny)
+    table.cell(tb, 1, 3, na(ny.mean)     ? "—" : f_pct(ny.mean)     + " / " + f_pct(ny.sd),     text_color = color.white, text_size = size.tiny)
