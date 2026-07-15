@@ -2,23 +2,24 @@
 // =============================================================================
 // Session σ-Bands (live behaviour overlay)
 // -----------------------------------------------------------------------------
-// Draw each session's ±1σ / ±2σ bands on the chart and WATCH how price behaves
-// against them — the same way on history and on the live bar.
+// Draw each session's ±0.5σ / ±1σ / ±1.5σ / ±2σ bands on the chart and WATCH
+// how price behaves against them — the same way on history and on the live bar.
+// (Matches the web app's Asset-Stats ±0.5/1/1.5/2σ band set.)
 //
 // For an ordered pair (reference -> trigger):
 //   * the REFERENCE session's log return  r = ln(close/open)  is collected over
 //     a rolling history into  mean (mu)  and  std (sigma);
 //   * bands are anchored at that reference session's OPEN price:
-//         +1σ = open*exp(mu+sigma)   +2σ = open*exp(mu+2sigma)   (and -1σ,-2σ);
+//         +kσ = open*exp(mu + k*sigma)   for k in {0.5, 1, 1.5, 2}  (and -k);
 //   * those bands are then SHOWN LIVE across the following TRIGGER session, so
-//     you see, bar by bar, whether price holds inside, pokes past ±1σ, or
-//     extends to ±2σ.
+//     you see, bar by bar, whether price holds inside, pokes past ±0.5σ / ±1σ,
+//     or extends to ±1.5σ / ±2σ.
 //
 // The bands are CAUSAL and NON-REPAINTING: each session's mu/sigma uses only
 // prior completed sessions, and a band level is fixed the moment the reference
 // session closes — so what you see historically is exactly what you'd have had
-// live. Bars are tinted while price closes beyond a band, and a triangle marks
-// the first close beyond ±1σ within a trigger session (the behavioural event).
+// live. Bars are graded by the furthest band price closes beyond, and a
+// triangle marks the first close beyond ±1σ within a trigger session.
 //
 // Pairs:  Tokyo -> London,  London -> New York,  New York -> London (overnight).
 // Use an INTRADAY timeframe (5m .. 4h). Sessions are in each centre's own
@@ -48,8 +49,9 @@ showLN = input.bool(true,  "London → New York",          group = grpP)
 showNL = input.bool(false, "New York → London (overnight)", group = grpP)
 
 grpD = "Behaviour highlighting"
-shadeZones = input.bool(true, "Shade ±1σ→±2σ zones",         group = grpD)
-colorBars  = input.bool(true, "Tint bars closed beyond ±1σ", group = grpD)
+showHalf   = input.bool(true, "Show ±0.5σ and ±1.5σ bands",  group = grpD)
+shadeZones = input.bool(true, "Shade σ zones",               group = grpD)
+colorBars  = input.bool(true, "Tint bars by furthest band",  group = grpD)
 markCross  = input.bool(true, "Mark first close beyond ±1σ", group = grpD)
 
 colTL = input.color(color.blue,   "Tokyo→London colour", group = grpD)
@@ -106,10 +108,14 @@ ny.step(nyIn)
 
 // ------------------------------ bands ----------------------------------------
 type Band
-    float up1 = na
-    float up2 = na
-    float dn1 = na
-    float dn2 = na
+    float up05 = na
+    float up1  = na
+    float up15 = na
+    float up2  = na
+    float dn05 = na
+    float dn1  = na
+    float dn15 = na
+    float dn2  = na
     bool  active  = false
     bool  firstUp = false
     bool  firstDn = false
@@ -118,10 +124,17 @@ type Band
 // the first-cross flags when the trigger session begins.
 method update(Band b, Sess refS, Sess trigS, bool trigIn) =>
     if refS.closed and not na(refS.mean) and not na(refS.sd) and array.size(refS.rets) >= minSamples
-        b.up1 := refS.openP * math.exp(refS.mean + refS.sd)
-        b.up2 := refS.openP * math.exp(refS.mean + 2.0 * refS.sd)
-        b.dn1 := refS.openP * math.exp(refS.mean - refS.sd)
-        b.dn2 := refS.openP * math.exp(refS.mean - 2.0 * refS.sd)
+        float m = refS.mean
+        float s = refS.sd
+        float o = refS.openP
+        b.up05 := o * math.exp(m + 0.5 * s)
+        b.up1  := o * math.exp(m + 1.0 * s)
+        b.up15 := o * math.exp(m + 1.5 * s)
+        b.up2  := o * math.exp(m + 2.0 * s)
+        b.dn05 := o * math.exp(m - 0.5 * s)
+        b.dn1  := o * math.exp(m - 1.0 * s)
+        b.dn15 := o * math.exp(m - 1.5 * s)
+        b.dn2  := o * math.exp(m - 2.0 * s)
         b.active := true
     if trigIn and not trigIn[1]
         b.firstUp := false
@@ -138,41 +151,69 @@ bLN.update(london, ny,     nyIn)
 bNL.update(ny,     london, lnIn)
 
 // A band is drawn only WHILE its trigger session is live (that is the window
-// where you watch behaviour). Gate each level accordingly.
+// where you watch behaviour). Gate each level; the ±0.5σ/±1.5σ lines are also
+// gated by the showHalf toggle.
 tlOn = showTL and bTL.active and lnIn
 lnOn = showLN and bLN.active and nyIn
 nlOn = showNL and bNL.active and lnIn
 
-tl_u1 = tlOn ? bTL.up1 : na
-tl_u2 = tlOn ? bTL.up2 : na
-tl_d1 = tlOn ? bTL.dn1 : na
-tl_d2 = tlOn ? bTL.dn2 : na
-ln_u1 = lnOn ? bLN.up1 : na
-ln_u2 = lnOn ? bLN.up2 : na
-ln_d1 = lnOn ? bLN.dn1 : na
-ln_d2 = lnOn ? bLN.dn2 : na
-nl_u1 = nlOn ? bNL.up1 : na
-nl_u2 = nlOn ? bNL.up2 : na
-nl_d1 = nlOn ? bNL.dn1 : na
-nl_d2 = nlOn ? bNL.dn2 : na
+tl_u05 = (tlOn and showHalf) ? bTL.up05 : na
+tl_u1  = tlOn ? bTL.up1 : na
+tl_u15 = (tlOn and showHalf) ? bTL.up15 : na
+tl_u2  = tlOn ? bTL.up2 : na
+tl_d05 = (tlOn and showHalf) ? bTL.dn05 : na
+tl_d1  = tlOn ? bTL.dn1 : na
+tl_d15 = (tlOn and showHalf) ? bTL.dn15 : na
+tl_d2  = tlOn ? bTL.dn2 : na
+ln_u05 = (lnOn and showHalf) ? bLN.up05 : na
+ln_u1  = lnOn ? bLN.up1 : na
+ln_u15 = (lnOn and showHalf) ? bLN.up15 : na
+ln_u2  = lnOn ? bLN.up2 : na
+ln_d05 = (lnOn and showHalf) ? bLN.dn05 : na
+ln_d1  = lnOn ? bLN.dn1 : na
+ln_d15 = (lnOn and showHalf) ? bLN.dn15 : na
+ln_d2  = lnOn ? bLN.dn2 : na
+nl_u05 = (nlOn and showHalf) ? bNL.up05 : na
+nl_u1  = nlOn ? bNL.up1 : na
+nl_u15 = (nlOn and showHalf) ? bNL.up15 : na
+nl_u2  = nlOn ? bNL.up2 : na
+nl_d05 = (nlOn and showHalf) ? bNL.dn05 : na
+nl_d1  = nlOn ? bNL.dn1 : na
+nl_d15 = (nlOn and showHalf) ? bNL.dn15 : na
+nl_d2  = nlOn ? bNL.dn2 : na
 
 // ------------------------------ plots ----------------------------------------
+// Transparency deepens with distance: 0.5σ faint … 2σ solid.
 BR = plot.style_linebr
-p_tl_u1 = plot(tl_u1, "TK→LN +1σ", color.new(colTL, 45), 1, BR)
-p_tl_u2 = plot(tl_u2, "TK→LN +2σ", color.new(colTL, 20), 1, BR)
-p_tl_d1 = plot(tl_d1, "TK→LN −1σ", color.new(colTL, 45), 1, BR)
-p_tl_d2 = plot(tl_d2, "TK→LN −2σ", color.new(colTL, 20), 1, BR)
-p_ln_u1 = plot(ln_u1, "LN→NY +1σ", color.new(colLN, 45), 1, BR)
-p_ln_u2 = plot(ln_u2, "LN→NY +2σ", color.new(colLN, 20), 1, BR)
-p_ln_d1 = plot(ln_d1, "LN→NY −1σ", color.new(colLN, 45), 1, BR)
-p_ln_d2 = plot(ln_d2, "LN→NY −2σ", color.new(colLN, 20), 1, BR)
-p_nl_u1 = plot(nl_u1, "NY→LN +1σ", color.new(colNL, 45), 1, BR)
-p_nl_u2 = plot(nl_u2, "NY→LN +2σ", color.new(colNL, 20), 1, BR)
-p_nl_d1 = plot(nl_d1, "NY→LN −1σ", color.new(colNL, 45), 1, BR)
-p_nl_d2 = plot(nl_d2, "NY→LN −2σ", color.new(colNL, 20), 1, BR)
+plot(tl_u05, "TK→LN +0.5σ", color.new(colTL, 62), 1, BR)
+p_tl_u1  = plot(tl_u1,  "TK→LN +1σ",   color.new(colTL, 45), 1, BR)
+plot(tl_u15, "TK→LN +1.5σ", color.new(colTL, 32), 1, BR)
+p_tl_u2  = plot(tl_u2,  "TK→LN +2σ",   color.new(colTL, 16), 1, BR)
+plot(tl_d05, "TK→LN −0.5σ", color.new(colTL, 62), 1, BR)
+p_tl_d1  = plot(tl_d1,  "TK→LN −1σ",   color.new(colTL, 45), 1, BR)
+plot(tl_d15, "TK→LN −1.5σ", color.new(colTL, 32), 1, BR)
+p_tl_d2  = plot(tl_d2,  "TK→LN −2σ",   color.new(colTL, 16), 1, BR)
+plot(ln_u05, "LN→NY +0.5σ", color.new(colLN, 62), 1, BR)
+p_ln_u1  = plot(ln_u1,  "LN→NY +1σ",   color.new(colLN, 45), 1, BR)
+plot(ln_u15, "LN→NY +1.5σ", color.new(colLN, 32), 1, BR)
+p_ln_u2  = plot(ln_u2,  "LN→NY +2σ",   color.new(colLN, 16), 1, BR)
+plot(ln_d05, "LN→NY −0.5σ", color.new(colLN, 62), 1, BR)
+p_ln_d1  = plot(ln_d1,  "LN→NY −1σ",   color.new(colLN, 45), 1, BR)
+plot(ln_d15, "LN→NY −1.5σ", color.new(colLN, 32), 1, BR)
+p_ln_d2  = plot(ln_d2,  "LN→NY −2σ",   color.new(colLN, 16), 1, BR)
+plot(nl_u05, "NY→LN +0.5σ", color.new(colNL, 62), 1, BR)
+p_nl_u1  = plot(nl_u1,  "NY→LN +1σ",   color.new(colNL, 45), 1, BR)
+plot(nl_u15, "NY→LN +1.5σ", color.new(colNL, 32), 1, BR)
+p_nl_u2  = plot(nl_u2,  "NY→LN +2σ",   color.new(colNL, 16), 1, BR)
+plot(nl_d05, "NY→LN −0.5σ", color.new(colNL, 62), 1, BR)
+p_nl_d1  = plot(nl_d1,  "NY→LN −1σ",   color.new(colNL, 45), 1, BR)
+plot(nl_d15, "NY→LN −1.5σ", color.new(colNL, 32), 1, BR)
+p_nl_d2  = plot(nl_d2,  "NY→LN −2σ",   color.new(colNL, 16), 1, BR)
 
-zoneUp = shadeZones ? color.new(color.teal, 88) : na
-zoneDn = shadeZones ? color.new(color.red,  88) : na
+// σ zones: inner 1σ→2σ shaded a little stronger (drawn between the 1σ and 2σ
+// plot ids so it fills whichever pairs are active).
+zoneUp = shadeZones ? color.new(color.teal, 84) : na
+zoneDn = shadeZones ? color.new(color.red,  84) : na
 fill(p_tl_u1, p_tl_u2, zoneUp, "TK→LN +σ zone")
 fill(p_tl_d1, p_tl_d2, zoneDn, "TK→LN −σ zone")
 fill(p_ln_u1, p_ln_u2, zoneUp, "LN→NY +σ zone")
@@ -181,15 +222,29 @@ fill(p_nl_u1, p_nl_u2, zoneUp, "NY→LN +σ zone")
 fill(p_nl_d1, p_nl_d2, zoneDn, "NY→LN −σ zone")
 
 // ------------------------ behaviour highlighting -----------------------------
-// Bars tinted while price closes beyond ANY active band (bright beyond ±2σ).
-up2Now = (tlOn and close > bTL.up2) or (lnOn and close > bLN.up2) or (nlOn and close > bNL.up2)
-up1Now = (tlOn and close > bTL.up1) or (lnOn and close > bLN.up1) or (nlOn and close > bNL.up1)
-dn2Now = (tlOn and close < bTL.dn2) or (lnOn and close < bLN.dn2) or (nlOn and close < bNL.dn2)
-dn1Now = (tlOn and close < bTL.dn1) or (lnOn and close < bLN.dn1) or (nlOn and close < bNL.dn1)
-barCol = up2Now ? color.new(color.teal, 0)  :
-         up1Now ? color.new(color.teal, 55) :
-         dn2Now ? color.new(color.red, 0)   :
-         dn1Now ? color.new(color.red, 55)  : na
+// Bars graded by the FURTHEST band price closes beyond (any active pair).
+f_up(float lvlTL, float lvlLN, float lvlNL) =>
+    (tlOn and close > lvlTL) or (lnOn and close > lvlLN) or (nlOn and close > lvlNL)
+f_dn(float lvlTL, float lvlLN, float lvlNL) =>
+    (tlOn and close < lvlTL) or (lnOn and close < lvlLN) or (nlOn and close < lvlNL)
+
+up2N  = f_up(bTL.up2,  bLN.up2,  bNL.up2)
+up15N = f_up(bTL.up15, bLN.up15, bNL.up15)
+up1N  = f_up(bTL.up1,  bLN.up1,  bNL.up1)
+up05N = f_up(bTL.up05, bLN.up05, bNL.up05)
+dn2N  = f_dn(bTL.dn2,  bLN.dn2,  bNL.dn2)
+dn15N = f_dn(bTL.dn15, bLN.dn15, bNL.dn15)
+dn1N  = f_dn(bTL.dn1,  bLN.dn1,  bNL.dn1)
+dn05N = f_dn(bTL.dn05, bLN.dn05, bNL.dn05)
+
+barCol = up2N  ? color.new(color.teal, 0)  :
+         up15N ? color.new(color.teal, 30) :
+         up1N  ? color.new(color.teal, 52) :
+         up05N ? color.new(color.teal, 74) :
+         dn2N  ? color.new(color.red, 0)   :
+         dn15N ? color.new(color.red, 30)  :
+         dn1N  ? color.new(color.red, 52)  :
+         dn05N ? color.new(color.red, 74)  : na
 barcolor(colorBars ? barCol : na, title = "Beyond-band bars")
 
 // First close beyond ±1σ within each trigger session (the behavioural event).
