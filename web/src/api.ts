@@ -95,50 +95,43 @@ export interface DistStats {
   mean?: number;
   std?: number;
   skew?: number;
-  bands?: { up1: number; up2: number; dn1: number; dn2: number };
   probs?: {
-    p_up: number; p_gt_1sd: number; p_gt_2sd: number;
-    p_lt_1sd: number; p_lt_2sd: number;
+    p_up: number;
+    up: Record<string, number>;    // "0.5","1.0","1.5","2.0" -> P(r > mu+kσ)
+    down: Record<string, number>;  // P(r < mu-kσ)
   };
   hist?: { edges: number[]; counts: number[] };
 }
-export interface CleanStats {
+export interface CleanSegment {
+  from: number;
+  to: number;
   n: number;
   eff_mean: number | null;
-  eff_median: number | null;
-  mae_sd_mean: number | null;
+  adverse_mean: number | null;
   bars_mean: number | null;
 }
 export interface SideStats {
-  n_days: number;
-  n_breakout: number;
-  n_target: number;
-  p_breakout: number | null;
-  p_target: number | null;
-  p_target_given_breakout: number | null;
-  clean: CleanStats;
-}
-export interface Transition {
-  reference: string;
-  trigger: string;
-  overnight: boolean;
-  note?: string;
-  ref_mean?: number;
-  ref_std?: number;
-  bands?: { up1: number; up2: number; dn1: number; dn2: number };
-  up?: SideStats;
-  down?: SideStats;
-}
-export interface DayToDay {
+  bands: number[];
   n: number;
-  p_next_up?: number;
-  p_next_gt_1sd?: number;
-  p_next_lt_1sd?: number;
-  mean_next?: number;
+  p_breakout: (number | null)[];
+  p_touch: (number | null)[];
+  breakout_counts: number[];
+  matrix: (number | null)[][];     // [breakout band][target band]
+  clean_segments: CleanSegment[];
 }
-export interface DailyStudy extends DistStats {
-  intraday?: { up: SideStats; down: SideStats };
-  day_to_day?: { after_up_1sd: DayToDay; after_down_1sd: DayToDay };
+export interface Trigger {
+  key: string;
+  label: string;
+  overnight: boolean;
+  n_days: number;
+  up: SideStats;
+  down: SideStats;
+}
+export interface Reference {
+  key: string;
+  label: string;
+  reference_dist: DistStats;
+  triggers: Trigger[];
 }
 export interface AssetStatsReport {
   asset: string;
@@ -146,10 +139,12 @@ export interface AssetStatsReport {
   n_bars: number;
   n_days: number;
   date_range: [string, string];
+  available_range: [string, string];
+  bands: number[];
   sessions: Record<string, DistStats>;
-  transitions: Transition[];
-  daily: DailyStudy;
+  references: Reference[];
 }
+export interface AssetRange { start: string; end: string; n_days: number }
 
 const pad = (n: number) => String(n).padStart(2, '0');
 

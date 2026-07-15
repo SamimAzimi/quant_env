@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
-import { api, withParams, type AssetStatsReport, type DayToDay } from '../api';
+import {
+  api, withParams, type AssetRange, type AssetStatsReport,
+} from '../api';
 import DistHistogram from '../components/DistHistogram';
-import TransitionCard from '../components/TransitionCard';
+import TriggerCard from '../components/TriggerCard';
 
 interface StatsMeta {
   available: string[];
@@ -9,30 +11,17 @@ interface StatsMeta {
   timeframes: string[];
 }
 
-const pctOrDash = (x: number | null | undefined) =>
-  x === null || x === undefined ? '—' : `${(x * 100).toFixed(1)}%`;
-
-function DayCond({ label, d }: { label: string; d: DayToDay }) {
-  return (
-    <div className="news-item">
-      <div className="small" style={{ fontWeight: 600 }}>{label} <span className="muted">n={d.n}</span></div>
-      {d.n > 0 ? (
-        <div className="small muted">
-          next day up {pctOrDash(d.p_next_up)} · &gt;+1σ {pctOrDash(d.p_next_gt_1sd)} ·
-          &lt;−1σ {pctOrDash(d.p_next_lt_1sd)} · mean {((d.mean_next ?? 0) * 100).toFixed(2)}%
-        </div>
-      ) : <div className="small muted">no occurrences</div>}
-    </div>
-  );
-}
-
-/** Statistics of an asset: session-transition and day-over-day behaviour. */
+/** Statistics of an asset: session/overlap distributions and conditional
+ *  band-transition behaviour over a chosen date range. */
 export default function AssetStatsPage() {
   const [meta, setMeta] = useState<StatsMeta>({
     available: [], default_charts: [], timeframes: ['15m'],
   });
   const [asset, setAsset] = useState('');
   const [tf, setTf] = useState('15m');
+  const [start, setStart] = useState('');
+  const [end, setEnd] = useState('');
+  const [range, setRange] = useState<AssetRange | null>(null);
   const [report, setReport] = useState<AssetStatsReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -40,22 +29,33 @@ export default function AssetStatsPage() {
   useEffect(() => {
     api.get<StatsMeta>('/api/stats/assets').then((m) => {
       setMeta(m);
-      const first = m.available[0] ?? m.default_charts[0] ?? '';
-      setAsset(first);
+      setAsset(m.available[0] ?? m.default_charts[0] ?? '');
     }).catch(() => {});
   }, []);
 
+  // when asset/timeframe change, fetch the available range and default to full
+  useEffect(() => {
+    if (!asset) return;
+    setRange(null); setReport(null); setError('');
+    api.get<AssetRange>(withParams('/api/asset-stats/range', { asset, tf }))
+      .then((r) => { setRange(r); setStart(r.start); setEnd(r.end); })
+      .catch((e) => setError(String(e)));
+  }, [asset, tf]);
+
   const run = () => {
     if (!asset) return;
+    // omit start/end when they equal the full range (analyze full history)
+    const full = range && start === range.start && end === range.end;
     setLoading(true); setError(''); setReport(null);
-    api.get<AssetStatsReport>(withParams('/api/asset-stats', { asset, tf }))
+    api.get<AssetStatsReport>(withParams('/api/asset-stats', {
+      asset, tf, start: full ? '' : start, end: full ? '' : end,
+    }))
       .then(setReport)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
   };
 
   const assetChoices = meta.available.length > 0 ? meta.available : meta.default_charts;
-  const daily = report?.daily;
 
   return (
     <main className="page">
@@ -73,89 +73,77 @@ export default function AssetStatsPage() {
             {meta.timeframes.map((t) => <option key={t}>{t}</option>)}
           </select>
         </label>
+        <label className="row small">
+          <span className="muted">From</span>
+          <input type="date" value={start} min={range?.start} max={end}
+            onChange={(e) => setStart(e.target.value)} />
+        </label>
+        <label className="row small">
+          <span className="muted">To</span>
+          <input type="date" value={end} min={start} max={range?.end}
+            onChange={(e) => setEnd(e.target.value)} />
+        </label>
         <button className="primary" disabled={loading || !asset} onClick={run}>
           {loading ? 'Analyzing…' : 'Analyze'}
         </button>
       </div>
 
-      {error && <p className="error">{error}</p>}
-      {!report && !error && !loading && (
-        <p className="muted">
-          Pick a ticker and an intraday timeframe, then Analyze. The backend
-          studies every trading day of history: session log-return
-          distributions (Tokyo, London, New York), how cleanly one session's
-          breakout continues to the next session's 2σ, and the same
-          conditional statistics day-over-day.
+      {range && !report && !loading && (
+        <p className="muted small">
+          {asset} · {tf} — data available {range.start} → {range.end}
+          ({range.n_days} days). The full range is used unless you narrow it.
+          Press Analyze.
         </p>
       )}
+      {error && <p className="error">{error}</p>}
 
       {report && (
         <>
           <p className="small muted">
             {report.asset} · {report.timeframe} · {report.n_days} days ·
-            {report.date_range[0]} → {report.date_range[1]}
+            {report.date_range[0]} → {report.date_range[1]}. Bands: ±0.5/1/1.5/2σ.
           </p>
 
-          <h2 className="section-head">Session return distributions</h2>
+          <h2 className="section-head">Session &amp; overlap return distributions</h2>
           <div className="charts-grid">
             {Object.entries(report.sessions).map(([name, dist]) => (
               <DistHistogram key={name} dist={dist} title={name} />
             ))}
-            {daily && <DistHistogram dist={daily} title="Full trading day" />}
           </div>
 
-          <h2 className="section-head">Session transitions — conditional continuation</h2>
-          <div className="stats-grid">
-            {report.transitions.map((t) => (
-              <TransitionCard key={`${t.reference}-${t.trigger}`} t={t} />
+          <h2 className="section-head">
+            Conditional band transitions — every reference stacked
+          </h2>
+          <p className="small muted">
+            Each reference session sets ±0.5/1/1.5/2σ bands from its own return
+            distribution (anchored at its open). The matrix is
+            P(touch <i>target</i>σ | trigger closes beyond <i>breakout</i>σ) —
+            click a cell to select. Clean move is per adjacent segment:
+            efficiency <code>|net|/Σ|bar move|</code>, mean adverse excursion
+            (σ), bars, and sample count.
+          </p>
+          <div className="ref-stack">
+            {report.references.map((ref) => (
+              <div key={ref.key} className="card">
+                <div className="row" style={{ justifyContent: 'space-between' }}>
+                  <h2>{ref.label}</h2>
+                  {ref.reference_dist.mean !== undefined && (
+                    <span className="muted small">
+                      ref μ {(ref.reference_dist.mean * 100).toFixed(2)}% ·
+                      σ {((ref.reference_dist.std ?? 0) * 100).toFixed(2)}% ·
+                      n={ref.reference_dist.n}
+                    </span>
+                  )}
+                </div>
+                {ref.triggers.length === 0 && (
+                  <p className="muted small">Not enough reference data for bands.</p>
+                )}
+                {ref.triggers.map((trig) => (
+                  <TriggerCard key={trig.key} trig={trig} />
+                ))}
+              </div>
             ))}
           </div>
-
-          {daily && (
-            <>
-              <h2 className="section-head">Day-over-day</h2>
-              <div className="stats-grid">
-                <div className="card">
-                  <h2>Intraday continuation</h2>
-                  <p className="small muted">
-                    Anchored at the day open, using the daily return μ/σ bands.
-                  </p>
-                  {daily.intraday && (
-                    <div className="row" style={{ gap: 18, alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1, minWidth: 220 }}>
-                        <div className="small" style={{ fontWeight: 600 }}>▲ Upside</div>
-                        <div className="small muted">
-                          P(close&gt;+1σ) {pctOrDash(daily.intraday.up.p_breakout)}<br />
-                          P(+2σ | breakout) {pctOrDash(daily.intraday.up.p_target_given_breakout)}<br />
-                          clean eff {daily.intraday.up.clean.eff_mean !== null
-                            ? `${(daily.intraday.up.clean.eff_mean * 100).toFixed(0)}%` : '—'}
-                        </div>
-                      </div>
-                      <div style={{ flex: 1, minWidth: 220 }}>
-                        <div className="small" style={{ fontWeight: 600 }}>▼ Downside</div>
-                        <div className="small muted">
-                          P(close&lt;−1σ) {pctOrDash(daily.intraday.down.p_breakout)}<br />
-                          P(−2σ | breakout) {pctOrDash(daily.intraday.down.p_target_given_breakout)}<br />
-                          clean eff {daily.intraday.down.clean.eff_mean !== null
-                            ? `${(daily.intraday.down.clean.eff_mean * 100).toFixed(0)}%` : '—'}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                <div className="card">
-                  <h2>Day-to-day conditional</h2>
-                  <p className="small muted">Given the previous day closed beyond ±1σ.</p>
-                  {daily.day_to_day && (
-                    <>
-                      <DayCond label="After an up day (&gt;+1σ)" d={daily.day_to_day.after_up_1sd} />
-                      <DayCond label="After a down day (&lt;−1σ)" d={daily.day_to_day.after_down_1sd} />
-                    </>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
         </>
       )}
     </main>

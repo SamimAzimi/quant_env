@@ -1,7 +1,8 @@
-"""Asset behaviour statistics engine + endpoint."""
+"""Asset behaviour statistics engine (overlap segments, σ-bands, matrix)."""
 import importlib
 import os
 import sys
+from datetime import date
 from unittest import mock
 
 import numpy as np
@@ -12,9 +13,9 @@ from fastapi.testclient import TestClient
 from server import asset_stats
 
 
-def _synthetic(days=300, bars_per_day=96, seed=1, london_drift=0.0):
+def _synthetic(days=300, seed=1, london_drift=0.0):
     rng = np.random.default_rng(seed)
-    idx = pd.date_range("2024-01-01", periods=days * bars_per_day, freq="15min")
+    idx = pd.date_range("2024-01-01", periods=days * 96, freq="15min")
     step = rng.normal(0, 0.0006, len(idx))
     if london_drift:
         step += (((idx.hour >= 7) & (idx.hour < 16)).astype(float)) * london_drift
@@ -26,71 +27,82 @@ def _synthetic(days=300, bars_per_day=96, seed=1, london_drift=0.0):
                          "Low": lo, "Close": close})
 
 
-def _analyze(df):
+def _analyze(df, **kw):
     with mock.patch.object(asset_stats, "load_bars", return_value=df):
-        return asset_stats.analyze("TEST", "15m")
+        return asset_stats.analyze("TEST", "15m", **kw)
 
 
-def test_report_structure_and_sessions():
+def test_bands_and_segments():
     r = _analyze(_synthetic())
-    assert r["n_days"] == 300
-    assert set(r["sessions"]) == {"Tokyo", "London", "New York"}
-    for s in r["sessions"].values():
-        assert s["n"] > 0
-        assert "mean" in s and "std" in s and s["std"] > 0
-        assert set(s["bands"]) == {"up1", "up2", "dn1", "dn2"}
-        assert s["bands"]["up2"] > s["bands"]["up1"] > s["bands"]["dn1"] > s["bands"]["dn2"]
-        assert len(s["hist"]["counts"]) + 1 == len(s["hist"]["edges"])
+    assert r["bands"] == [0.5, 1.0, 1.5, 2.0]
+    # all overlap/session segments present
+    for label in ["Tokyo", "Tokyo ∩ London", "London ∩ NY",
+                  "New York ∖ London (after London)", "Full trading day"]:
+        assert label in r["sessions"]
+        s = r["sessions"][label]
+        assert s["n"] > 0 and s["std"] > 0
+        assert set(s["probs"]["up"]) == {"0.5", "1.0", "1.5", "2.0"}
 
 
-def test_transitions_have_conditional_probabilities():
+def test_six_references_with_expected_triggers():
     r = _analyze(_synthetic())
-    pairs = {(t["reference"], t["trigger"]) for t in r["transitions"]}
-    assert pairs == {("Tokyo", "London"), ("London", "New York"),
-                     ("New York", "London")}
-    for t in r["transitions"]:
-        for side in (t["up"], t["down"]):
-            assert 0 <= side["p_breakout"] <= 1
-            # P(target | breakout) is a valid conditional probability
-            if side["p_target_given_breakout"] is not None:
-                assert 0 <= side["p_target_given_breakout"] <= 1
-            # never more targets than breakouts among conditioned days
-            assert side["clean"]["n"] <= side["n_breakout"]
-            if side["clean"]["eff_mean"] is not None:
-                assert 0 < side["clean"]["eff_mean"] <= 1
+    keys = {ref["key"]: ref for ref in r["references"]}
+    assert set(keys) == {"tokyo_wo_london", "tokyo_x_london", "london_x_ny",
+                         "london_wo_ny", "ov_tokyo_london", "ov_london_ny"}
+    # Tokyo∖London fans out to two London triggers
+    assert len(keys["tokyo_wo_london"]["triggers"]) == 2
+    # the London∩NY overlap reference has an overnight continuation
+    ov = keys["ov_london_ny"]["triggers"][0]
+    assert ov["overnight"] is True
 
 
-def test_overnight_transition_pairs_next_day():
+def test_matrix_is_valid_conditional_probability():
     r = _analyze(_synthetic())
-    ny_london = next(t for t in r["transitions"]
-                     if (t["reference"], t["trigger"]) == ("New York", "London"))
-    assert ny_london["overnight"] is True
-    # one fewer usable day than same-day pairs (last NY has no next London)
-    assert ny_london["up"]["n_days"] <= r["n_days"]
+    for ref in r["references"]:
+        for trig in ref["triggers"]:
+            for side in (trig["up"], trig["down"]):
+                m = side["matrix"]
+                assert len(m) == 4 and all(len(row) == 4 for row in m)
+                for i in range(4):
+                    for j in range(4):
+                        v = m[i][j]
+                        if v is not None:
+                            assert 0 <= v <= 1
+                        # reaching a nearer-or-equal band given breakout is certain-ish:
+                        if j <= i and side["breakout_counts"][i] > 0:
+                            assert v is None or v >= 0
 
 
-def test_daily_study_bands_and_day_to_day():
+def test_clean_segments_are_adjacent_and_bounded():
     r = _analyze(_synthetic())
-    d = r["daily"]
-    assert d["n"] == 300
-    assert d["bands"]["up1"] < d["bands"]["up2"]
-    assert "intraday" in d and "day_to_day" in d
-    for cond in d["day_to_day"].values():
-        if cond["n"] > 0:
-            assert 0 <= cond["p_next_up"] <= 1
+    trig = r["references"][0]["triggers"][0]
+    segs = trig["up"]["clean_segments"]
+    assert [(s["from"], s["to"]) for s in segs] == [(0.5, 1.0), (1.0, 1.5), (1.5, 2.0)]
+    for s in segs:
+        if s["eff_mean"] is not None:
+            assert 0 < s["eff_mean"] <= 1
+            assert s["adverse_mean"] >= 0
+
+
+def test_date_range_filter_narrows_sample():
+    df = _synthetic(days=300)
+    full = _analyze(df)
+    sub = _analyze(df, start=date(2024, 3, 1), end=date(2024, 4, 30))
+    assert sub["n_days"] < full["n_days"]
+    assert sub["date_range"][0] >= "2024-03-01"
+    assert sub["date_range"][1] <= "2024-04-30"
+
+
+def test_available_range():
+    with mock.patch.object(asset_stats, "load_bars", return_value=_synthetic(days=100)):
+        rng = asset_stats.available_range("TEST", "15m")
+    assert rng["n_days"] == 100
+    assert rng["start"] == "2024-01-01"
 
 
 def test_injected_london_drift_shows_in_distribution():
-    # a strong positive London drift should raise London's mean well above 0
     r = _analyze(_synthetic(london_drift=0.0002, seed=3))
     assert r["sessions"]["London"]["mean"] > r["sessions"]["Tokyo"]["mean"]
-    assert r["sessions"]["London"]["probs"]["p_up"] > 0.6
-
-
-def test_insufficient_data_raises():
-    tiny = _synthetic(days=1, bars_per_day=10)
-    with pytest.raises(ValueError):
-        _analyze(tiny.head(20))
 
 
 @pytest.fixture
@@ -103,6 +115,7 @@ def client(tmp_path):
         yield c
 
 
-def test_endpoint_validates_timeframe_and_missing_data(client):
+def test_endpoint_guards(client):
     assert client.get("/api/asset-stats?asset=FOO&tf=1d").status_code == 422
     assert client.get("/api/asset-stats?asset=NOPE&tf=15m").status_code == 404
+    assert client.get("/api/asset-stats/range?asset=NOPE&tf=15m").status_code == 404

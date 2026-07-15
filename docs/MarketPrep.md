@@ -109,24 +109,29 @@ too.
   every story shown in History is fully editable in place;
   VIX readings as a line chart; and the evolution of the nearest FOMC
   meeting's top rate buckets across recorded snapshots.
-- **Asset Stats** — pick a ticker and an intraday timeframe; the backend
-  (`server/asset_stats.py`) studies every trading day of history and returns:
-  - *Session return distributions* for Tokyo, London, New York, and the
-    full trading day — histogram with μ and ±1σ/±2σ band lines, plus skew
-    and empirical tail probabilities. Session return = `ln(close/open)`.
-  - *Session transitions* (Tokyo→London, London→New York, New York→London
-    overnight): the reference session's return distribution sets ±1σ/±2σ
-    bands; the card shows, up and down, P(the trigger session closes beyond
-    ±1σ), P(it reaches the reference ±2σ), and the key conditional
-    **P(reach 2σ | breakout)** — plus "clean move" quality for the 1σ→2σ
-    segment: path efficiency `|net| / Σ|bar move|`, mean adverse excursion
-    (in σ), and bar count. Everything is on a cumulative-log-return axis
-    anchored at the reference session's open; sessions are DST-correct
-    (`libs/market_sessions.py`).
-  - *Day-over-day*: the daily return distribution and bands, the intraday
-    continuation (P(2σ | closed beyond 1σ) and cleanliness anchored at the
-    day open), and the day-to-day conditional transition (given the
-    previous day closed beyond ±1σ, what the current day does).
+- **Asset Stats** — pick a ticker → timeframe; the available date range is
+  shown and used in full unless you narrow it (From/To), then Analyze. The
+  backend (`server/asset_stats.py`) studies every trading day in the range,
+  all session-based around the three majors and their overlaps, with
+  DST-correct windows (`libs/market_sessions.py`):
+  - *Session & overlap return distributions* — histograms (μ and
+    ±0.5/1/1.5/2σ band lines, skew, tail probabilities) for each segment:
+    Tokyo, Tokyo∖London, Tokyo∩London, London, London∖Tokyo, London∖NY,
+    London∩NY, New York, New York∖London, and the full trading day.
+    Segment return = `ln(close/open)`.
+  - *Conditional band transitions* — six reference sub-sessions, each
+    stacked on the page, each setting ±0.5/1/1.5/2σ bands from its own
+    return distribution (anchored at its open). Reference → trigger windows:
+    Tokyo∖London → London∖NY and London∩NY (separately); Tokyo∩London →
+    London-after-Tokyo ∖NY and ∩NY; London∩NY → NY-after-London→close;
+    London∖NY → New York; overlap Tokyo∩London → end-of-overlap→next
+    overlap; overlap London∩NY → same, overnight. For each trigger, up and
+    down: a full **matrix** P(touch *target*σ | close beyond *breakout*σ)
+    across all band pairs (click a cell to select), and **clean move** per
+    adjacent segment (0.5→1, 1→1.5, 1.5→2): path efficiency
+    `|net| / Σ|bar move|`, mean adverse excursion (σ), bars, and count.
+    Everything on a cumulative-log-return axis anchored at the reference
+    open. `/api/asset-stats/range` feeds the date pickers.
 - **Record** — the round **+** button (bottom-right, every page) opens an
   overlay with tabs: News (title, details, role — primary / supporting /
   contradicting / duplicate / update —, source with inline add, publish

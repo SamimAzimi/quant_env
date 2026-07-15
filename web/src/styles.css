@@ -104,6 +104,18 @@ body {
   margin: 20px 0 10px;
 }
 
+.ref-stack { display: flex; flex-direction: column; gap: 14px; }
+.trigger-card {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+table.data.matrix { width: auto; font-size: 12px; }
+table.data.matrix th, table.data.matrix td {
+  padding: 3px 8px; border: 1px solid var(--border); text-align: center;
+}
+table.data.matrix td { min-width: 42px; }
+
 .page { padding: 14px; max-width: 1900px; margin: 0 auto; }
 
 /* Sections grid: 1 col on mobile, 2 on laptop, dense multi-col on TV. */
