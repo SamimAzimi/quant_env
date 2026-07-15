@@ -132,6 +132,26 @@ too.
     `|net| / Σ|bar move|`, mean adverse excursion (σ), bars, and count.
     Everything on a cumulative-log-return axis anchored at the reference
     open. `/api/asset-stats/range` feeds the date pickers.
+- **Day & Quant** — day-over-day behaviour plus a hedge-fund-style
+  character report (`server/quant_stats.py`), same ticker→timeframe→date-
+  range flow:
+  - *Performance & risk* (from daily returns): annualised return/vol,
+    Sharpe, Sortino, Calmar, max drawdown (+ duration, current), VaR/CVaR
+    at 95/99, win rate, profit factor, tail ratio, best/worst day.
+  - *Daily return distribution* (μ/σ/skew, ±0.5/1/1.5/2σ) and *intraday
+    continuation* — the full breakout×target matrix and per-segment clean
+    move anchored at the day open (day = Tokyo open→NY close).
+  - *Day-to-day transition* (given the previous day's σ-bucket → next
+    day), *overnight gap* analysis (size, fill probability, continuation),
+    and *streak* statistics.
+  - *Quant character* from `libs/market_stats.py`: distribution shape
+    (skew, excess kurtosis, Jarque–Bera normality, Hill tail index,
+    Student-t dof), volatility (Yang–Zhang & others, GARCH persistence,
+    ARCH clustering, leverage effect), mean-reversion/trend (Hurst, DFA,
+    variance ratio, ADF, OU half-life, verdict), and predictability
+    (Markov, conditional direction, empirical touch probabilities). This
+    section needs scipy/scikit-learn (core deps); it degrades gracefully
+    with a note if they are missing.
 - **Record** — the round **+** button (bottom-right, every page) opens an
   overlay with tabs: News (title, details, role — primary / supporting /
   contradicting / duplicate / update —, source with inline add, publish
