@@ -23,7 +23,7 @@
 // DST automatically. Use an intraday timeframe (5m .. 4h).
 // =============================================================================
 indicator("Session Segments + σ-Bands", overlay = true,
-     max_labels_count = 300, max_lines_count = 500)
+     max_labels_count = 500, max_lines_count = 500)
 
 if not timeframe.isintraday
     runtime.error("Use an intraday timeframe (< 1D) — sessions need sub-daily bars.")
@@ -41,6 +41,8 @@ grpM = "Distribution"
 lookback   = input.int(250, "Rolling window (segments, per type)", minval = 20, group = grpM)
 minSamples = input.int(30,  "Min segments before drawing bands",  minval = 2,  group = grpM)
 showHalf   = input.bool(true, "Show ±0.5σ and ±1.5σ bands",        group = grpM)
+showMeanMode = input.bool(true, "Draw mean (bold) & mode (dashed)", group = grpM)
+labelMM      = input.bool(true, "Label μ and Mo",                   group = grpM)
 
 grpZ = "Segment shading"
 shadeSeg = input.bool(true, "Shade segments (background)", group = grpZ)
@@ -79,14 +81,47 @@ zNy   = nyIn and not lnIn                     // New York after London
 
 dayEnd = nyIn[1] and not nyIn                 // end of the trading day (NY close)
 
+// Mode of a return sample, estimated as the centre of the densest histogram
+// bin (there is no built-in mode). Returns na for tiny samples.
+f_mode(array<float> a) =>
+    n = array.size(a)
+    float m = na
+    if n >= 5
+        float lo = array.min(a)
+        float hi = array.max(a)
+        float rng = hi - lo
+        if rng <= 0
+            m := lo
+        else
+            int bins = math.min(24, math.max(5, int(math.sqrt(n))))
+            counts = array.new_int(bins, 0)
+            for i = 0 to n - 1
+                float v = array.get(a, i)
+                int bi = math.min(int((v - lo) / rng * bins), bins - 1)
+                array.set(counts, bi, array.get(counts, bi) + 1)
+            int best = 0
+            int bestc = -1
+            for b = 0 to bins - 1
+                int c = array.get(counts, b)
+                if c > bestc
+                    bestc := c
+                    best := b
+            m := lo + (best + 0.5) / bins * rng
+    m
+
 // ----------------------------- reference segments ----------------------------
 type Seg
     array<float> rets
     float mean = na
     float sd   = na
+    float mode = na               // densest-bin estimate of the return mode
     float runOpen = na            // running open of the in-progress instance
     bool  on = false              // bands active (segment open → day end)
     bool  armed = false           // fired on the bar the segment opens
+    float mLevel  = na            // mean price level (anchored at seg open)
+    float moLevel = na            // mode price level
+    line  lMean = na
+    line  lMode = na
     float u05 = na
     float u1  = na
     float u15 = na
@@ -120,6 +155,8 @@ method step(Seg s, bool inSeg, bool endOfDay) =>
             s.d1  := o * math.exp(s.mean - 1.0 * s.sd)
             s.d15 := o * math.exp(s.mean - 1.5 * s.sd)
             s.d2  := o * math.exp(s.mean - 2.0 * s.sd)
+            s.mLevel  := o * math.exp(s.mean)
+            s.moLevel := na(s.mode) ? na : o * math.exp(s.mode)
             s.on    := true
             s.armed := true
     if inSeg[1] and not inSeg
@@ -131,6 +168,7 @@ method step(Seg s, bool inSeg, bool endOfDay) =>
             if array.size(s.rets) >= 2
                 s.mean := array.avg(s.rets)
                 s.sd   := array.stdev(s.rets, false)   // sample std (ddof=1)
+                s.mode := f_mode(s.rets)
     if endOfDay
         s.on := false
 
@@ -147,6 +185,8 @@ method draw(Seg s, bool en, color col) =>
         s.ld1  := na
         s.ld15 := na
         s.ld2  := na
+        s.lMean := na
+        s.lMode := na
         if en
             s.lu1 := line.new(bar_index, s.u1, bar_index, s.u1, xloc = xloc.bar_index, color = color.new(col, 46))
             s.lu2 := line.new(bar_index, s.u2, bar_index, s.u2, xloc = xloc.bar_index, color = color.new(col, 16))
@@ -157,6 +197,15 @@ method draw(Seg s, bool en, color col) =>
                 s.lu15 := line.new(bar_index, s.u15, bar_index, s.u15, xloc = xloc.bar_index, color = color.new(col, 32), style = line.style_dotted)
                 s.ld05 := line.new(bar_index, s.d05, bar_index, s.d05, xloc = xloc.bar_index, color = color.new(col, 66), style = line.style_dotted)
                 s.ld15 := line.new(bar_index, s.d15, bar_index, s.d15, xloc = xloc.bar_index, color = color.new(col, 32), style = line.style_dotted)
+            if showMeanMode
+                // mean: bold solid; mode: dashed — distinct from the σ bands
+                s.lMean := line.new(bar_index, s.mLevel, bar_index, s.mLevel, xloc = xloc.bar_index, color = color.new(col, 5), width = 2)
+                if labelMM
+                    label.new(bar_index, s.mLevel, "μ", xloc = xloc.bar_index, style = label.style_none, textcolor = color.new(col, 0), size = size.tiny)
+                if not na(s.moLevel)
+                    s.lMode := line.new(bar_index, s.moLevel, bar_index, s.moLevel, xloc = xloc.bar_index, color = color.new(col, 20), width = 1, style = line.style_dashed)
+                    if labelMM
+                        label.new(bar_index, s.moLevel, "Mo", xloc = xloc.bar_index, style = label.style_none, textcolor = color.new(col, 0), size = size.tiny)
     if en and s.on
         if not na(s.lu1)
             line.set_x2(s.lu1, bar_index)
@@ -174,6 +223,10 @@ method draw(Seg s, bool en, color col) =>
             line.set_x2(s.ld05, bar_index)
         if not na(s.ld15)
             line.set_x2(s.ld15, bar_index)
+        if not na(s.lMean)
+            line.set_x2(s.lMean, bar_index)
+        if not na(s.lMode)
+            line.set_x2(s.lMode, bar_index)
 
 var segTk   = Seg.new(rets = array.new<float>())
 var segTkLn = Seg.new(rets = array.new<float>())
