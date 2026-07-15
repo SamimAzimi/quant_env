@@ -12,14 +12,18 @@
 //    r = ln(close/open) is collected over a rolling history into mean (mu) and
 //    std (sigma). When that segment opens, its ±0.5/1/1.5/2σ bands are anchored
 //    at its open (using the PRIOR distribution — causal, non-repainting) and
-//    drawn forward to the end of the trading day, so you can watch how the rest
-//    of the day behaves relative to that reference. Each segment's bands have
+//    drawn forward to the end of the trading day. Each segment's bands have
 //    their own on/off toggle.
+//
+// The bands are drawn as LINE objects (not plots), so all five segments × eight
+// levels fit without hitting TradingView's 64-plot limit. Line history is
+// bounded by max_lines_count, so only recent days keep their bands on screen.
 //
 // Sessions are defined in each centre's own timezone, so TradingView applies
 // DST automatically. Use an intraday timeframe (5m .. 4h).
 // =============================================================================
-indicator("Session Segments + σ-Bands", overlay = true, max_labels_count = 300)
+indicator("Session Segments + σ-Bands", overlay = true,
+     max_labels_count = 300, max_lines_count = 500)
 
 if not timeframe.isintraday
     runtime.error("Use an intraday timeframe (< 1D) — sessions need sub-daily bars.")
@@ -82,6 +86,7 @@ type Seg
     float sd   = na
     float runOpen = na            // running open of the in-progress instance
     bool  on = false              // bands active (segment open → day end)
+    bool  armed = false           // fired on the bar the segment opens
     float u05 = na
     float u1  = na
     float u15 = na
@@ -90,10 +95,19 @@ type Seg
     float d1  = na
     float d15 = na
     float d2  = na
+    line lu05 = na
+    line lu1  = na
+    line lu15 = na
+    line lu2  = na
+    line ld05 = na
+    line ld1  = na
+    line ld15 = na
+    line ld2  = na
 
 // Arm bands at segment open from the PRIOR distribution; collect the return at
 // segment close; clear the band set at the end of the trading day.
 method step(Seg s, bool inSeg, bool endOfDay) =>
+    s.armed := false
     if inSeg and not inSeg[1]
         s.runOpen := open
         if not na(s.mean) and not na(s.sd) and array.size(s.rets) >= minSamples
@@ -106,7 +120,8 @@ method step(Seg s, bool inSeg, bool endOfDay) =>
             s.d1  := o * math.exp(s.mean - 1.0 * s.sd)
             s.d15 := o * math.exp(s.mean - 1.5 * s.sd)
             s.d2  := o * math.exp(s.mean - 2.0 * s.sd)
-            s.on  := true
+            s.on    := true
+            s.armed := true
     if inSeg[1] and not inSeg
         r = math.log(close[1] / s.runOpen)
         if not na(r)
@@ -118,6 +133,47 @@ method step(Seg s, bool inSeg, bool endOfDay) =>
                 s.sd   := array.stdev(s.rets, false)   // sample std (ddof=1)
     if endOfDay
         s.on := false
+
+// Draw / extend this segment's band lines (line objects, not plots).
+method draw(Seg s, bool en, color col) =>
+    if s.armed
+        // reset references each new segment instance so we never extend an
+        // earlier day's line; recreate only the enabled levels
+        s.lu05 := na
+        s.lu1  := na
+        s.lu15 := na
+        s.lu2  := na
+        s.ld05 := na
+        s.ld1  := na
+        s.ld15 := na
+        s.ld2  := na
+        if en
+            s.lu1 := line.new(bar_index, s.u1, bar_index, s.u1, xloc = xloc.bar_index, color = color.new(col, 46))
+            s.lu2 := line.new(bar_index, s.u2, bar_index, s.u2, xloc = xloc.bar_index, color = color.new(col, 16))
+            s.ld1 := line.new(bar_index, s.d1, bar_index, s.d1, xloc = xloc.bar_index, color = color.new(col, 46))
+            s.ld2 := line.new(bar_index, s.d2, bar_index, s.d2, xloc = xloc.bar_index, color = color.new(col, 16))
+            if showHalf
+                s.lu05 := line.new(bar_index, s.u05, bar_index, s.u05, xloc = xloc.bar_index, color = color.new(col, 66), style = line.style_dotted)
+                s.lu15 := line.new(bar_index, s.u15, bar_index, s.u15, xloc = xloc.bar_index, color = color.new(col, 32), style = line.style_dotted)
+                s.ld05 := line.new(bar_index, s.d05, bar_index, s.d05, xloc = xloc.bar_index, color = color.new(col, 66), style = line.style_dotted)
+                s.ld15 := line.new(bar_index, s.d15, bar_index, s.d15, xloc = xloc.bar_index, color = color.new(col, 32), style = line.style_dotted)
+    if en and s.on
+        if not na(s.lu1)
+            line.set_x2(s.lu1, bar_index)
+        if not na(s.lu2)
+            line.set_x2(s.lu2, bar_index)
+        if not na(s.ld1)
+            line.set_x2(s.ld1, bar_index)
+        if not na(s.ld2)
+            line.set_x2(s.ld2, bar_index)
+        if not na(s.lu05)
+            line.set_x2(s.lu05, bar_index)
+        if not na(s.lu15)
+            line.set_x2(s.lu15, bar_index)
+        if not na(s.ld05)
+            line.set_x2(s.ld05, bar_index)
+        if not na(s.ld15)
+            line.set_x2(s.ld15, bar_index)
 
 var segTk   = Seg.new(rets = array.new<float>())
 var segTkLn = Seg.new(rets = array.new<float>())
@@ -131,80 +187,11 @@ segLn.step(zLn, dayEnd)
 segLnNy.step(zLnNy, dayEnd)
 segNy.step(zNy, dayEnd)
 
-// ----------------------------- gated band series -----------------------------
-// f(active-toggle, seg) -> level or na; half bands also gated by showHalf.
-g_u05(bool en, Seg s) => (en and s.on and showHalf) ? s.u05 : na
-g_u1 (bool en, Seg s) => (en and s.on) ? s.u1 : na
-g_u15(bool en, Seg s) => (en and s.on and showHalf) ? s.u15 : na
-g_u2 (bool en, Seg s) => (en and s.on) ? s.u2 : na
-g_d05(bool en, Seg s) => (en and s.on and showHalf) ? s.d05 : na
-g_d1 (bool en, Seg s) => (en and s.on) ? s.d1 : na
-g_d15(bool en, Seg s) => (en and s.on and showHalf) ? s.d15 : na
-g_d2 (bool en, Seg s) => (en and s.on) ? s.d2 : na
-
-// plot()/fill() must be at global scope, so each segment's 8 levels are
-// written out. Transparency deepens with distance: 0.5σ faint … 2σ solid.
-BR = plot.style_linebr
-
-// -- Tokyo (solo) --
-plot(g_u05(bTk, segTk), "TK +0.5σ", color.new(cTk, 64), 1, BR)
-tk_p1  = plot(g_u1 (bTk, segTk), "TK +1σ",   color.new(cTk, 46), 1, BR)
-plot(g_u15(bTk, segTk), "TK +1.5σ", color.new(cTk, 32), 1, BR)
-tk_p2  = plot(g_u2 (bTk, segTk), "TK +2σ",   color.new(cTk, 16), 1, BR)
-plot(g_d05(bTk, segTk), "TK −0.5σ", color.new(cTk, 64), 1, BR)
-tk_p1d = plot(g_d1 (bTk, segTk), "TK −1σ",   color.new(cTk, 46), 1, BR)
-plot(g_d15(bTk, segTk), "TK −1.5σ", color.new(cTk, 32), 1, BR)
-tk_p2d = plot(g_d2 (bTk, segTk), "TK −2σ",   color.new(cTk, 16), 1, BR)
-fill(tk_p1, tk_p2, color.new(cTk, 90), "TK +σ zone")
-fill(tk_p1d, tk_p2d, color.new(cTk, 90), "TK −σ zone")
-
-// -- Tokyo ∩ London --
-plot(g_u05(bTkLn, segTkLn), "TKLN +0.5σ", color.new(cTkLn, 64), 1, BR)
-tl_p1  = plot(g_u1 (bTkLn, segTkLn), "TKLN +1σ",   color.new(cTkLn, 46), 1, BR)
-plot(g_u15(bTkLn, segTkLn), "TKLN +1.5σ", color.new(cTkLn, 32), 1, BR)
-tl_p2  = plot(g_u2 (bTkLn, segTkLn), "TKLN +2σ",   color.new(cTkLn, 16), 1, BR)
-plot(g_d05(bTkLn, segTkLn), "TKLN −0.5σ", color.new(cTkLn, 64), 1, BR)
-tl_p1d = plot(g_d1 (bTkLn, segTkLn), "TKLN −1σ",   color.new(cTkLn, 46), 1, BR)
-plot(g_d15(bTkLn, segTkLn), "TKLN −1.5σ", color.new(cTkLn, 32), 1, BR)
-tl_p2d = plot(g_d2 (bTkLn, segTkLn), "TKLN −2σ",   color.new(cTkLn, 16), 1, BR)
-fill(tl_p1, tl_p2, color.new(cTkLn, 88), "TKLN +σ zone")
-fill(tl_p1d, tl_p2d, color.new(cTkLn, 88), "TKLN −σ zone")
-
-// -- London (solo) --
-plot(g_u05(bLn, segLn), "LN +0.5σ", color.new(cLn, 64), 1, BR)
-ln_p1  = plot(g_u1 (bLn, segLn), "LN +1σ",   color.new(cLn, 46), 1, BR)
-plot(g_u15(bLn, segLn), "LN +1.5σ", color.new(cLn, 32), 1, BR)
-ln_p2  = plot(g_u2 (bLn, segLn), "LN +2σ",   color.new(cLn, 16), 1, BR)
-plot(g_d05(bLn, segLn), "LN −0.5σ", color.new(cLn, 64), 1, BR)
-ln_p1d = plot(g_d1 (bLn, segLn), "LN −1σ",   color.new(cLn, 46), 1, BR)
-plot(g_d15(bLn, segLn), "LN −1.5σ", color.new(cLn, 32), 1, BR)
-ln_p2d = plot(g_d2 (bLn, segLn), "LN −2σ",   color.new(cLn, 16), 1, BR)
-fill(ln_p1, ln_p2, color.new(cLn, 90), "LN +σ zone")
-fill(ln_p1d, ln_p2d, color.new(cLn, 90), "LN −σ zone")
-
-// -- London ∩ New York --
-plot(g_u05(bLnNy, segLnNy), "LNNY +0.5σ", color.new(cLnNy, 64), 1, BR)
-ly_p1  = plot(g_u1 (bLnNy, segLnNy), "LNNY +1σ",   color.new(cLnNy, 46), 1, BR)
-plot(g_u15(bLnNy, segLnNy), "LNNY +1.5σ", color.new(cLnNy, 32), 1, BR)
-ly_p2  = plot(g_u2 (bLnNy, segLnNy), "LNNY +2σ",   color.new(cLnNy, 16), 1, BR)
-plot(g_d05(bLnNy, segLnNy), "LNNY −0.5σ", color.new(cLnNy, 64), 1, BR)
-ly_p1d = plot(g_d1 (bLnNy, segLnNy), "LNNY −1σ",   color.new(cLnNy, 46), 1, BR)
-plot(g_d15(bLnNy, segLnNy), "LNNY −1.5σ", color.new(cLnNy, 32), 1, BR)
-ly_p2d = plot(g_d2 (bLnNy, segLnNy), "LNNY −2σ",   color.new(cLnNy, 16), 1, BR)
-fill(ly_p1, ly_p2, color.new(cLnNy, 88), "LNNY +σ zone")
-fill(ly_p1d, ly_p2d, color.new(cLnNy, 88), "LNNY −σ zone")
-
-// -- New York (solo) --
-plot(g_u05(bNy, segNy), "NY +0.5σ", color.new(cNy, 64), 1, BR)
-ny_p1  = plot(g_u1 (bNy, segNy), "NY +1σ",   color.new(cNy, 46), 1, BR)
-plot(g_u15(bNy, segNy), "NY +1.5σ", color.new(cNy, 32), 1, BR)
-ny_p2  = plot(g_u2 (bNy, segNy), "NY +2σ",   color.new(cNy, 16), 1, BR)
-plot(g_d05(bNy, segNy), "NY −0.5σ", color.new(cNy, 64), 1, BR)
-ny_p1d = plot(g_d1 (bNy, segNy), "NY −1σ",   color.new(cNy, 46), 1, BR)
-plot(g_d15(bNy, segNy), "NY −1.5σ", color.new(cNy, 32), 1, BR)
-ny_p2d = plot(g_d2 (bNy, segNy), "NY −2σ",   color.new(cNy, 16), 1, BR)
-fill(ny_p1, ny_p2, color.new(cNy, 90), "NY +σ zone")
-fill(ny_p1d, ny_p2d, color.new(cNy, 90), "NY −σ zone")
+segTk.draw(bTk, cTk)
+segTkLn.draw(bTkLn, cTkLn)
+segLn.draw(bLn, cLn)
+segLnNy.draw(bLnNy, cLnNy)
+segNy.draw(bNy, cNy)
 
 // ----------------------------- segment shading -------------------------------
 bg = (zTkLn and sTkLn) ? color.new(cTkLn, 80) :
@@ -224,15 +211,16 @@ if showLabels and zoneName != "" and zoneName != zoneName[1]
 
 // ----------------------------- legend ----------------------------------------
 var table lg = table.new(position.top_right, 3, 6, border_width = 1)
+f_row(int r, string name, color col, bool bandOn) =>
+    table.cell(lg, 0, r, "  ", bgcolor = color.new(col, 30))
+    table.cell(lg, 1, r, name, text_color = color.white, text_size = size.tiny)
+    table.cell(lg, 2, r, bandOn ? "on" : "—",
+         text_color = bandOn ? color.white : color.gray, text_size = size.tiny)
+
 if showLegend and barstate.islast
-    table.cell(lg, 0, 0, "segment", text_color = color.gray, text_size = size.tiny)
+    table.cell(lg, 0, 0, "seg", text_color = color.gray, text_size = size.tiny)
     table.cell(lg, 1, 0, "zone", text_color = color.gray, text_size = size.tiny)
     table.cell(lg, 2, 0, "bands", text_color = color.gray, text_size = size.tiny)
-    f_row(int r, string name, color col, bool bandOn) =>
-        table.cell(lg, 0, r, "  ", bgcolor = color.new(col, 30))
-        table.cell(lg, 1, r, name, text_color = color.white, text_size = size.tiny)
-        table.cell(lg, 2, r, bandOn ? "on" : "—",
-             text_color = bandOn ? color.white : color.gray, text_size = size.tiny)
     f_row(1, "Tokyo (solo)",      cTk,   bTk)
     f_row(2, "Tokyo ∩ London",    cTkLn, bTkLn)
     f_row(3, "London (solo)",     cLn,   bLn)
