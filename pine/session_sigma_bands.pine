@@ -1,31 +1,25 @@
 //@version=6
 // =============================================================================
-// Session σ-Bands (live behaviour overlay)
+// Session Segments + σ-Bands  (all-in-one)
 // -----------------------------------------------------------------------------
-// Draw each session's ±0.5σ / ±1σ / ±1.5σ / ±2σ bands on the chart and WATCH
-// how price behaves against them — the same way on history and on the live bar.
-// (Matches the web app's Asset-Stats ±0.5/1/1.5/2σ band set.)
+// Two tools in one, matching the web app's Asset-Stats engine:
 //
-// For an ordered pair (reference -> trigger):
-//   * the REFERENCE session's log return  r = ln(close/open)  is collected over
-//     a rolling history into  mean (mu)  and  std (sigma);
-//   * bands are anchored at that reference session's OPEN price:
-//         +kσ = open*exp(mu + k*sigma)   for k in {0.5, 1, 1.5, 2}  (and -k);
-//   * those bands are then SHOWN LIVE across the following TRIGGER session, so
-//     you see, bar by bar, whether price holds inside, pokes past ±0.5σ / ±1σ,
-//     or extends to ±1.5σ / ±2σ.
+// 1. SEGMENT MAP — shade each trading day into its five mutually-exclusive
+//    reference segments (solo sessions + the two overlaps):
+//        Tokyo (solo) · Tokyo∩London · London (solo) · London∩NY · New York (solo)
 //
-// The bands are CAUSAL and NON-REPAINTING: each session's mu/sigma uses only
-// prior completed sessions, and a band level is fixed the moment the reference
-// session closes — so what you see historically is exactly what you'd have had
-// live. Bars are graded by the furthest band price closes beyond, and a
-// triangle marks the first close beyond ±1σ within a trigger session.
+// 2. σ-BANDS PER REFERENCE — for EACH of those five segments, its log return
+//    r = ln(close/open) is collected over a rolling history into mean (mu) and
+//    std (sigma). When that segment opens, its ±0.5/1/1.5/2σ bands are anchored
+//    at its open (using the PRIOR distribution — causal, non-repainting) and
+//    drawn forward to the end of the trading day, so you can watch how the rest
+//    of the day behaves relative to that reference. Each segment's bands have
+//    their own on/off toggle.
 //
-// Pairs:  Tokyo -> London,  London -> New York,  New York -> London (overnight).
-// Use an INTRADAY timeframe (5m .. 4h). Sessions are in each centre's own
-// timezone, so TradingView applies DST automatically.
+// Sessions are defined in each centre's own timezone, so TradingView applies
+// DST automatically. Use an intraday timeframe (5m .. 4h).
 // =============================================================================
-indicator("Session σ-Bands (live)", overlay = true)
+indicator("Session Segments + σ-Bands", overlay = true, max_labels_count = 300)
 
 if not timeframe.isintraday
     runtime.error("Use an intraday timeframe (< 1D) — sessions need sub-daily bars.")
@@ -40,234 +34,207 @@ nySess = input.session("0800-1700", "New York hours",  group = grpS)
 nyTz   = input.string ("America/New_York", "New York timezone", group = grpS)
 
 grpM = "Distribution"
-lookback   = input.int(250, "Rolling window (sessions, per type)", minval = 20, group = grpM)
-minSamples = input.int(30,  "Min sessions before drawing bands",   minval = 2,  group = grpM)
+lookback   = input.int(250, "Rolling window (segments, per type)", minval = 20, group = grpM)
+minSamples = input.int(30,  "Min segments before drawing bands",  minval = 2,  group = grpM)
+showHalf   = input.bool(true, "Show ±0.5σ and ±1.5σ bands",        group = grpM)
 
-grpP = "Which reference frame to overlay"
-showTL = input.bool(true,  "Tokyo → London",             group = grpP)
-showLN = input.bool(true,  "London → New York",          group = grpP)
-showNL = input.bool(false, "New York → London (overnight)", group = grpP)
+grpZ = "Segment shading"
+shadeSeg = input.bool(true, "Shade segments (background)", group = grpZ)
+sTk   = input.bool(true, "Tokyo (solo)",      group = grpZ)
+sTkLn = input.bool(true, "Tokyo ∩ London",    group = grpZ)
+sLn   = input.bool(true, "London (solo)",     group = grpZ)
+sLnNy = input.bool(true, "London ∩ New York", group = grpZ)
+sNy   = input.bool(true, "New York (solo)",   group = grpZ)
 
-grpD = "Behaviour highlighting"
-showHalf   = input.bool(true, "Show ±0.5σ and ±1.5σ bands",  group = grpD)
-shadeZones = input.bool(true, "Shade σ zones",               group = grpD)
-colorBars  = input.bool(true, "Tint bars by furthest band",  group = grpD)
-markCross  = input.bool(true, "Mark first close beyond ±1σ", group = grpD)
+grpB = "σ-Bands per reference — activate each"
+bTk   = input.bool(false, "Tokyo (solo) bands",      group = grpB)
+bTkLn = input.bool(true,  "Tokyo ∩ London bands",    group = grpB)
+bLn   = input.bool(false, "London (solo) bands",     group = grpB)
+bLnNy = input.bool(true,  "London ∩ New York bands", group = grpB)
+bNy   = input.bool(false, "New York (solo) bands",   group = grpB)
 
-colTL = input.color(color.blue,   "Tokyo→London colour", group = grpD)
-colLN = input.color(color.orange, "London→NY colour",    group = grpD)
-colNL = input.color(color.purple, "NY→London colour",    group = grpD)
+grpD = "Display"
+showLegend = input.bool(true,  "Legend",           group = grpD)
+showLabels = input.bool(false, "Label segments",   group = grpD)
+cTk   = input.color(color.red,    "Tokyo colour",        group = grpD)
+cTkLn = input.color(color.orange, "Tokyo∩London colour", group = grpD)
+cLn   = input.color(color.blue,   "London colour",       group = grpD)
+cLnNy = input.color(color.teal,   "London∩NY colour",    group = grpD)
+cNy   = input.color(color.green,  "New York colour",     group = grpD)
 
-// ----------------------------- session state ---------------------------------
-type Sess
-    float openP = na
-    float hi    = na
-    float lo    = na
-    float lastC = na
-    array<float> rets
-    float mean  = na
-    float sd    = na
-    bool  closed = false
-
-// time() needs simple-string args, so in-session booleans are computed at the
-// top level and passed in.
-method step(Sess s, bool inNow) =>
-    s.closed := false
-    if inNow and not inNow[1]
-        s.openP := open
-        s.hi    := high
-        s.lo    := low
-        s.lastC := close
-    else if inNow
-        s.hi    := math.max(s.hi, high)
-        s.lo    := math.min(s.lo, low)
-        s.lastC := close
-    if inNow[1] and not inNow
-        nprior = array.size(s.rets)
-        if nprior >= 2
-            s.mean := array.avg(s.rets)
-            s.sd   := array.stdev(s.rets, false)   // sample std (ddof=1)
-        r = math.log(s.lastC / s.openP)
-        if not na(r)
-            array.push(s.rets, r)
-            if array.size(s.rets) > lookback
-                array.shift(s.rets)
-        s.closed := true
-
-var tokyo  = Sess.new(rets = array.new<float>())
-var london = Sess.new(rets = array.new<float>())
-var ny     = Sess.new(rets = array.new<float>())
-
+// ----------------------------- session zones ---------------------------------
 tkIn = not na(time(timeframe.period, tkSess, tkTz))
 lnIn = not na(time(timeframe.period, lnSess, lnTz))
 nyIn = not na(time(timeframe.period, nySess, nyTz))
 
-tokyo.step(tkIn)
-london.step(lnIn)
-ny.step(nyIn)
+zTkLn = tkIn and lnIn                         // Tokyo ∩ London
+zLnNy = lnIn and nyIn                         // London ∩ New York
+zTk   = tkIn and not lnIn                     // Tokyo before London
+zLn   = lnIn and not tkIn and not nyIn        // London, after Tokyo & before NY
+zNy   = nyIn and not lnIn                     // New York after London
 
-// ------------------------------ bands ----------------------------------------
-type Band
-    float up05 = na
-    float up1  = na
-    float up15 = na
-    float up2  = na
-    float dn05 = na
-    float dn1  = na
-    float dn15 = na
-    float dn2  = na
-    bool  active  = false
-    bool  firstUp = false
-    bool  firstDn = false
+dayEnd = nyIn[1] and not nyIn                 // end of the trading day (NY close)
 
-// Arm bands when the reference closes; disarm after the trigger closes; reset
-// the first-cross flags when the trigger session begins.
-method update(Band b, Sess refS, Sess trigS, bool trigIn) =>
-    if refS.closed and not na(refS.mean) and not na(refS.sd) and array.size(refS.rets) >= minSamples
-        float m = refS.mean
-        float s = refS.sd
-        float o = refS.openP
-        b.up05 := o * math.exp(m + 0.5 * s)
-        b.up1  := o * math.exp(m + 1.0 * s)
-        b.up15 := o * math.exp(m + 1.5 * s)
-        b.up2  := o * math.exp(m + 2.0 * s)
-        b.dn05 := o * math.exp(m - 0.5 * s)
-        b.dn1  := o * math.exp(m - 1.0 * s)
-        b.dn15 := o * math.exp(m - 1.5 * s)
-        b.dn2  := o * math.exp(m - 2.0 * s)
-        b.active := true
-    if trigIn and not trigIn[1]
-        b.firstUp := false
-        b.firstDn := false
-    if b.active and trigS.closed
-        b.active := false
+// ----------------------------- reference segments ----------------------------
+type Seg
+    array<float> rets
+    float mean = na
+    float sd   = na
+    float runOpen = na            // running open of the in-progress instance
+    bool  on = false              // bands active (segment open → day end)
+    float u05 = na
+    float u1  = na
+    float u15 = na
+    float u2  = na
+    float d05 = na
+    float d1  = na
+    float d15 = na
+    float d2  = na
 
-var bTL = Band.new()
-var bLN = Band.new()
-var bNL = Band.new()
+// Arm bands at segment open from the PRIOR distribution; collect the return at
+// segment close; clear the band set at the end of the trading day.
+method step(Seg s, bool inSeg, bool endOfDay) =>
+    if inSeg and not inSeg[1]
+        s.runOpen := open
+        if not na(s.mean) and not na(s.sd) and array.size(s.rets) >= minSamples
+            float o = open
+            s.u05 := o * math.exp(s.mean + 0.5 * s.sd)
+            s.u1  := o * math.exp(s.mean + 1.0 * s.sd)
+            s.u15 := o * math.exp(s.mean + 1.5 * s.sd)
+            s.u2  := o * math.exp(s.mean + 2.0 * s.sd)
+            s.d05 := o * math.exp(s.mean - 0.5 * s.sd)
+            s.d1  := o * math.exp(s.mean - 1.0 * s.sd)
+            s.d15 := o * math.exp(s.mean - 1.5 * s.sd)
+            s.d2  := o * math.exp(s.mean - 2.0 * s.sd)
+            s.on  := true
+    if inSeg[1] and not inSeg
+        r = math.log(close[1] / s.runOpen)
+        if not na(r)
+            array.push(s.rets, r)
+            if array.size(s.rets) > lookback
+                array.shift(s.rets)
+            if array.size(s.rets) >= 2
+                s.mean := array.avg(s.rets)
+                s.sd   := array.stdev(s.rets, false)   // sample std (ddof=1)
+    if endOfDay
+        s.on := false
 
-bTL.update(tokyo,  london, lnIn)
-bLN.update(london, ny,     nyIn)
-bNL.update(ny,     london, lnIn)
+var segTk   = Seg.new(rets = array.new<float>())
+var segTkLn = Seg.new(rets = array.new<float>())
+var segLn   = Seg.new(rets = array.new<float>())
+var segLnNy = Seg.new(rets = array.new<float>())
+var segNy   = Seg.new(rets = array.new<float>())
 
-// A band is drawn only WHILE its trigger session is live (that is the window
-// where you watch behaviour). Gate each level; the ±0.5σ/±1.5σ lines are also
-// gated by the showHalf toggle.
-tlOn = showTL and bTL.active and lnIn
-lnOn = showLN and bLN.active and nyIn
-nlOn = showNL and bNL.active and lnIn
+segTk.step(zTk, dayEnd)
+segTkLn.step(zTkLn, dayEnd)
+segLn.step(zLn, dayEnd)
+segLnNy.step(zLnNy, dayEnd)
+segNy.step(zNy, dayEnd)
 
-tl_u05 = (tlOn and showHalf) ? bTL.up05 : na
-tl_u1  = tlOn ? bTL.up1 : na
-tl_u15 = (tlOn and showHalf) ? bTL.up15 : na
-tl_u2  = tlOn ? bTL.up2 : na
-tl_d05 = (tlOn and showHalf) ? bTL.dn05 : na
-tl_d1  = tlOn ? bTL.dn1 : na
-tl_d15 = (tlOn and showHalf) ? bTL.dn15 : na
-tl_d2  = tlOn ? bTL.dn2 : na
-ln_u05 = (lnOn and showHalf) ? bLN.up05 : na
-ln_u1  = lnOn ? bLN.up1 : na
-ln_u15 = (lnOn and showHalf) ? bLN.up15 : na
-ln_u2  = lnOn ? bLN.up2 : na
-ln_d05 = (lnOn and showHalf) ? bLN.dn05 : na
-ln_d1  = lnOn ? bLN.dn1 : na
-ln_d15 = (lnOn and showHalf) ? bLN.dn15 : na
-ln_d2  = lnOn ? bLN.dn2 : na
-nl_u05 = (nlOn and showHalf) ? bNL.up05 : na
-nl_u1  = nlOn ? bNL.up1 : na
-nl_u15 = (nlOn and showHalf) ? bNL.up15 : na
-nl_u2  = nlOn ? bNL.up2 : na
-nl_d05 = (nlOn and showHalf) ? bNL.dn05 : na
-nl_d1  = nlOn ? bNL.dn1 : na
-nl_d15 = (nlOn and showHalf) ? bNL.dn15 : na
-nl_d2  = nlOn ? bNL.dn2 : na
+// ----------------------------- gated band series -----------------------------
+// f(active-toggle, seg) -> level or na; half bands also gated by showHalf.
+g_u05(bool en, Seg s) => (en and s.on and showHalf) ? s.u05 : na
+g_u1 (bool en, Seg s) => (en and s.on) ? s.u1 : na
+g_u15(bool en, Seg s) => (en and s.on and showHalf) ? s.u15 : na
+g_u2 (bool en, Seg s) => (en and s.on) ? s.u2 : na
+g_d05(bool en, Seg s) => (en and s.on and showHalf) ? s.d05 : na
+g_d1 (bool en, Seg s) => (en and s.on) ? s.d1 : na
+g_d15(bool en, Seg s) => (en and s.on and showHalf) ? s.d15 : na
+g_d2 (bool en, Seg s) => (en and s.on) ? s.d2 : na
 
-// ------------------------------ plots ----------------------------------------
-// Transparency deepens with distance: 0.5σ faint … 2σ solid.
+// plot()/fill() must be at global scope, so each segment's 8 levels are
+// written out. Transparency deepens with distance: 0.5σ faint … 2σ solid.
 BR = plot.style_linebr
-plot(tl_u05, "TK→LN +0.5σ", color.new(colTL, 62), 1, BR)
-p_tl_u1  = plot(tl_u1,  "TK→LN +1σ",   color.new(colTL, 45), 1, BR)
-plot(tl_u15, "TK→LN +1.5σ", color.new(colTL, 32), 1, BR)
-p_tl_u2  = plot(tl_u2,  "TK→LN +2σ",   color.new(colTL, 16), 1, BR)
-plot(tl_d05, "TK→LN −0.5σ", color.new(colTL, 62), 1, BR)
-p_tl_d1  = plot(tl_d1,  "TK→LN −1σ",   color.new(colTL, 45), 1, BR)
-plot(tl_d15, "TK→LN −1.5σ", color.new(colTL, 32), 1, BR)
-p_tl_d2  = plot(tl_d2,  "TK→LN −2σ",   color.new(colTL, 16), 1, BR)
-plot(ln_u05, "LN→NY +0.5σ", color.new(colLN, 62), 1, BR)
-p_ln_u1  = plot(ln_u1,  "LN→NY +1σ",   color.new(colLN, 45), 1, BR)
-plot(ln_u15, "LN→NY +1.5σ", color.new(colLN, 32), 1, BR)
-p_ln_u2  = plot(ln_u2,  "LN→NY +2σ",   color.new(colLN, 16), 1, BR)
-plot(ln_d05, "LN→NY −0.5σ", color.new(colLN, 62), 1, BR)
-p_ln_d1  = plot(ln_d1,  "LN→NY −1σ",   color.new(colLN, 45), 1, BR)
-plot(ln_d15, "LN→NY −1.5σ", color.new(colLN, 32), 1, BR)
-p_ln_d2  = plot(ln_d2,  "LN→NY −2σ",   color.new(colLN, 16), 1, BR)
-plot(nl_u05, "NY→LN +0.5σ", color.new(colNL, 62), 1, BR)
-p_nl_u1  = plot(nl_u1,  "NY→LN +1σ",   color.new(colNL, 45), 1, BR)
-plot(nl_u15, "NY→LN +1.5σ", color.new(colNL, 32), 1, BR)
-p_nl_u2  = plot(nl_u2,  "NY→LN +2σ",   color.new(colNL, 16), 1, BR)
-plot(nl_d05, "NY→LN −0.5σ", color.new(colNL, 62), 1, BR)
-p_nl_d1  = plot(nl_d1,  "NY→LN −1σ",   color.new(colNL, 45), 1, BR)
-plot(nl_d15, "NY→LN −1.5σ", color.new(colNL, 32), 1, BR)
-p_nl_d2  = plot(nl_d2,  "NY→LN −2σ",   color.new(colNL, 16), 1, BR)
 
-// σ zones: inner 1σ→2σ shaded a little stronger (drawn between the 1σ and 2σ
-// plot ids so it fills whichever pairs are active).
-zoneUp = shadeZones ? color.new(color.teal, 84) : na
-zoneDn = shadeZones ? color.new(color.red,  84) : na
-fill(p_tl_u1, p_tl_u2, zoneUp, "TK→LN +σ zone")
-fill(p_tl_d1, p_tl_d2, zoneDn, "TK→LN −σ zone")
-fill(p_ln_u1, p_ln_u2, zoneUp, "LN→NY +σ zone")
-fill(p_ln_d1, p_ln_d2, zoneDn, "LN→NY −σ zone")
-fill(p_nl_u1, p_nl_u2, zoneUp, "NY→LN +σ zone")
-fill(p_nl_d1, p_nl_d2, zoneDn, "NY→LN −σ zone")
+// -- Tokyo (solo) --
+plot(g_u05(bTk, segTk), "TK +0.5σ", color.new(cTk, 64), 1, BR)
+tk_p1  = plot(g_u1 (bTk, segTk), "TK +1σ",   color.new(cTk, 46), 1, BR)
+plot(g_u15(bTk, segTk), "TK +1.5σ", color.new(cTk, 32), 1, BR)
+tk_p2  = plot(g_u2 (bTk, segTk), "TK +2σ",   color.new(cTk, 16), 1, BR)
+plot(g_d05(bTk, segTk), "TK −0.5σ", color.new(cTk, 64), 1, BR)
+tk_p1d = plot(g_d1 (bTk, segTk), "TK −1σ",   color.new(cTk, 46), 1, BR)
+plot(g_d15(bTk, segTk), "TK −1.5σ", color.new(cTk, 32), 1, BR)
+tk_p2d = plot(g_d2 (bTk, segTk), "TK −2σ",   color.new(cTk, 16), 1, BR)
+fill(tk_p1, tk_p2, color.new(cTk, 90), "TK +σ zone")
+fill(tk_p1d, tk_p2d, color.new(cTk, 90), "TK −σ zone")
 
-// ------------------------ behaviour highlighting -----------------------------
-// Bars graded by the FURTHEST band price closes beyond (any active pair).
-f_up(float lvlTL, float lvlLN, float lvlNL) =>
-    (tlOn and close > lvlTL) or (lnOn and close > lvlLN) or (nlOn and close > lvlNL)
-f_dn(float lvlTL, float lvlLN, float lvlNL) =>
-    (tlOn and close < lvlTL) or (lnOn and close < lvlLN) or (nlOn and close < lvlNL)
+// -- Tokyo ∩ London --
+plot(g_u05(bTkLn, segTkLn), "TKLN +0.5σ", color.new(cTkLn, 64), 1, BR)
+tl_p1  = plot(g_u1 (bTkLn, segTkLn), "TKLN +1σ",   color.new(cTkLn, 46), 1, BR)
+plot(g_u15(bTkLn, segTkLn), "TKLN +1.5σ", color.new(cTkLn, 32), 1, BR)
+tl_p2  = plot(g_u2 (bTkLn, segTkLn), "TKLN +2σ",   color.new(cTkLn, 16), 1, BR)
+plot(g_d05(bTkLn, segTkLn), "TKLN −0.5σ", color.new(cTkLn, 64), 1, BR)
+tl_p1d = plot(g_d1 (bTkLn, segTkLn), "TKLN −1σ",   color.new(cTkLn, 46), 1, BR)
+plot(g_d15(bTkLn, segTkLn), "TKLN −1.5σ", color.new(cTkLn, 32), 1, BR)
+tl_p2d = plot(g_d2 (bTkLn, segTkLn), "TKLN −2σ",   color.new(cTkLn, 16), 1, BR)
+fill(tl_p1, tl_p2, color.new(cTkLn, 88), "TKLN +σ zone")
+fill(tl_p1d, tl_p2d, color.new(cTkLn, 88), "TKLN −σ zone")
 
-up2N  = f_up(bTL.up2,  bLN.up2,  bNL.up2)
-up15N = f_up(bTL.up15, bLN.up15, bNL.up15)
-up1N  = f_up(bTL.up1,  bLN.up1,  bNL.up1)
-up05N = f_up(bTL.up05, bLN.up05, bNL.up05)
-dn2N  = f_dn(bTL.dn2,  bLN.dn2,  bNL.dn2)
-dn15N = f_dn(bTL.dn15, bLN.dn15, bNL.dn15)
-dn1N  = f_dn(bTL.dn1,  bLN.dn1,  bNL.dn1)
-dn05N = f_dn(bTL.dn05, bLN.dn05, bNL.dn05)
+// -- London (solo) --
+plot(g_u05(bLn, segLn), "LN +0.5σ", color.new(cLn, 64), 1, BR)
+ln_p1  = plot(g_u1 (bLn, segLn), "LN +1σ",   color.new(cLn, 46), 1, BR)
+plot(g_u15(bLn, segLn), "LN +1.5σ", color.new(cLn, 32), 1, BR)
+ln_p2  = plot(g_u2 (bLn, segLn), "LN +2σ",   color.new(cLn, 16), 1, BR)
+plot(g_d05(bLn, segLn), "LN −0.5σ", color.new(cLn, 64), 1, BR)
+ln_p1d = plot(g_d1 (bLn, segLn), "LN −1σ",   color.new(cLn, 46), 1, BR)
+plot(g_d15(bLn, segLn), "LN −1.5σ", color.new(cLn, 32), 1, BR)
+ln_p2d = plot(g_d2 (bLn, segLn), "LN −2σ",   color.new(cLn, 16), 1, BR)
+fill(ln_p1, ln_p2, color.new(cLn, 90), "LN +σ zone")
+fill(ln_p1d, ln_p2d, color.new(cLn, 90), "LN −σ zone")
 
-barCol = up2N  ? color.new(color.teal, 0)  :
-         up15N ? color.new(color.teal, 30) :
-         up1N  ? color.new(color.teal, 52) :
-         up05N ? color.new(color.teal, 74) :
-         dn2N  ? color.new(color.red, 0)   :
-         dn15N ? color.new(color.red, 30)  :
-         dn1N  ? color.new(color.red, 52)  :
-         dn05N ? color.new(color.red, 74)  : na
-barcolor(colorBars ? barCol : na, title = "Beyond-band bars")
+// -- London ∩ New York --
+plot(g_u05(bLnNy, segLnNy), "LNNY +0.5σ", color.new(cLnNy, 64), 1, BR)
+ly_p1  = plot(g_u1 (bLnNy, segLnNy), "LNNY +1σ",   color.new(cLnNy, 46), 1, BR)
+plot(g_u15(bLnNy, segLnNy), "LNNY +1.5σ", color.new(cLnNy, 32), 1, BR)
+ly_p2  = plot(g_u2 (bLnNy, segLnNy), "LNNY +2σ",   color.new(cLnNy, 16), 1, BR)
+plot(g_d05(bLnNy, segLnNy), "LNNY −0.5σ", color.new(cLnNy, 64), 1, BR)
+ly_p1d = plot(g_d1 (bLnNy, segLnNy), "LNNY −1σ",   color.new(cLnNy, 46), 1, BR)
+plot(g_d15(bLnNy, segLnNy), "LNNY −1.5σ", color.new(cLnNy, 32), 1, BR)
+ly_p2d = plot(g_d2 (bLnNy, segLnNy), "LNNY −2σ",   color.new(cLnNy, 16), 1, BR)
+fill(ly_p1, ly_p2, color.new(cLnNy, 88), "LNNY +σ zone")
+fill(ly_p1d, ly_p2d, color.new(cLnNy, 88), "LNNY −σ zone")
 
-// First close beyond ±1σ within each trigger session (the behavioural event).
-f_firstUp(Band b, bool on) =>
-    sig = on and close > b.up1 and not b.firstUp
-    if sig
-        b.firstUp := true
-    sig
-f_firstDn(Band b, bool on) =>
-    sig = on and close < b.dn1 and not b.firstDn
-    if sig
-        b.firstDn := true
-    sig
+// -- New York (solo) --
+plot(g_u05(bNy, segNy), "NY +0.5σ", color.new(cNy, 64), 1, BR)
+ny_p1  = plot(g_u1 (bNy, segNy), "NY +1σ",   color.new(cNy, 46), 1, BR)
+plot(g_u15(bNy, segNy), "NY +1.5σ", color.new(cNy, 32), 1, BR)
+ny_p2  = plot(g_u2 (bNy, segNy), "NY +2σ",   color.new(cNy, 16), 1, BR)
+plot(g_d05(bNy, segNy), "NY −0.5σ", color.new(cNy, 64), 1, BR)
+ny_p1d = plot(g_d1 (bNy, segNy), "NY −1σ",   color.new(cNy, 46), 1, BR)
+plot(g_d15(bNy, segNy), "NY −1.5σ", color.new(cNy, 32), 1, BR)
+ny_p2d = plot(g_d2 (bNy, segNy), "NY −2σ",   color.new(cNy, 16), 1, BR)
+fill(ny_p1, ny_p2, color.new(cNy, 90), "NY +σ zone")
+fill(ny_p1d, ny_p2d, color.new(cNy, 90), "NY −σ zone")
 
-tlXu = f_firstUp(bTL, tlOn), tlXd = f_firstDn(bTL, tlOn)
-lnXu = f_firstUp(bLN, lnOn), lnXd = f_firstDn(bLN, lnOn)
-nlXu = f_firstUp(bNL, nlOn), nlXd = f_firstDn(bNL, nlOn)
+// ----------------------------- segment shading -------------------------------
+bg = (zTkLn and sTkLn) ? color.new(cTkLn, 80) :
+     (zLnNy and sLnNy) ? color.new(cLnNy, 80) :
+     (zTk   and sTk)   ? color.new(cTk,   90) :
+     (zLn   and sLn)   ? color.new(cLn,   90) :
+     (zNy   and sNy)   ? color.new(cNy,   90) : na
+bgcolor(shadeSeg ? bg : na, title = "Segment shading")
 
-plotshape(markCross and (tlXu or lnXu or nlXu), "▲ broke +1σ",
-     shape.triangleup, location.belowbar, color.teal, size = size.tiny)
-plotshape(markCross and (tlXd or lnXd or nlXd), "▼ broke −1σ",
-     shape.triangledown, location.abovebar, color.red, size = size.tiny)
+// ----------------------------- labels ----------------------------------------
+zoneName = zTkLn ? "Tokyo ∩ London" : zLnNy ? "London ∩ NY" :
+           zTk ? "Tokyo" : zLn ? "London" : zNy ? "New York" : ""
+zoneCol  = zTkLn ? cTkLn : zLnNy ? cLnNy : zTk ? cTk : zLn ? cLn : zNy ? cNy : color.gray
+if showLabels and zoneName != "" and zoneName != zoneName[1]
+    label.new(bar_index, high, zoneName, style = label.style_label_down,
+         color = color.new(zoneCol, 20), textcolor = color.white, size = size.tiny)
 
-// Alerts so you can react live.
-alertcondition(tlXu or lnXu or nlXu, "Close beyond +1σ", "Price closed beyond a session +1σ band")
-alertcondition(tlXd or lnXd or nlXd, "Close beyond −1σ", "Price closed beyond a session −1σ band")
+// ----------------------------- legend ----------------------------------------
+var table lg = table.new(position.top_right, 3, 6, border_width = 1)
+if showLegend and barstate.islast
+    table.cell(lg, 0, 0, "segment", text_color = color.gray, text_size = size.tiny)
+    table.cell(lg, 1, 0, "zone", text_color = color.gray, text_size = size.tiny)
+    table.cell(lg, 2, 0, "bands", text_color = color.gray, text_size = size.tiny)
+    f_row(int r, string name, color col, bool bandOn) =>
+        table.cell(lg, 0, r, "  ", bgcolor = color.new(col, 30))
+        table.cell(lg, 1, r, name, text_color = color.white, text_size = size.tiny)
+        table.cell(lg, 2, r, bandOn ? "on" : "—",
+             text_color = bandOn ? color.white : color.gray, text_size = size.tiny)
+    f_row(1, "Tokyo (solo)",      cTk,   bTk)
+    f_row(2, "Tokyo ∩ London",    cTkLn, bTkLn)
+    f_row(3, "London (solo)",     cLn,   bLn)
+    f_row(4, "London ∩ New York", cLnNy, bLnNy)
+    f_row(5, "New York (solo)",   cNy,   bNy)
