@@ -1,299 +1,294 @@
-"""Asset behaviour statistics: session-transition and day-over-day analysis.
+"""Asset behaviour statistics — session/overlap segments, σ-bands, matrix.
 
 Answers "how does this instrument move" for one asset + one intraday
-timeframe, over all available history. Two studies:
+timeframe, over a chosen date range of history. Everything is session-based
+around the three majors (Tokyo, London, New York) and their overlaps, with
+DST-correct windows from libs/market_sessions.py (via marketdata._session_utc).
 
-1. SESSION TRANSITIONS. Each major session (Tokyo, London, New York) has a
-   log-return distribution across days: r = ln(close/open). Its mean μ and
-   std σ give bands μ±1σ, μ±2σ. For an ordered pair (reference → trigger)
-   we ask: when the trigger session closes beyond the *reference* session's
-   ±1σ band, how often — and how cleanly — does price go on to reach the
-   reference's ±2σ level within that trigger session?
+SEGMENTS. Each UTC trading day is cut into sub-windows using the real
+session bounds for that date:
+    Tokyo, Tokyo∖London, Tokyo∩London,
+    London, London∖Tokyo, London∖NY, London∩NY,
+    New York, New York∖London, Full trading day.
+Each segment's log return r = ln(close/open) across days gives a
+distribution: mean μ, std σ, skew, ±0.5/1/1.5/2σ bands, tail probabilities.
 
-     Tokyo → London,  London → New York,  New York → London (overnight).
+REFERENCES → TRIGGERS. Six reference sub-sessions each set ±0.5/1/1.5/2σ
+bands from their own return distribution, anchored at the reference open.
+A trigger window (defined per reference) is then measured on a
+cumulative-log-return axis anchored at that reference open:
 
-   Everything is measured on a cumulative-log-return axis anchored at the
-   reference session's open, so the reference bands and the trigger path
-   live on the same scale.
+  reference                         trigger window(s)
+  --------------------------------  ------------------------------------
+  Tokyo∖London                      London∖NY  and  London∩NY (separately)
+  Tokyo∩London                      London-after-Tokyo ∖NY  and  ∩NY
+  London∩NY                         NY-after-London → NY close
+  London∖NY                         New York session
+  overlap Tokyo∩London              end-of-overlap → next overlap start
+  overlap London∩NY                 end-of-overlap → next overlap (overnight)
 
-2. DAY-OVER-DAY. The same idea without sessions: the full trading-day
-   return r = ln(day_close/day_open) has μ, σ and ±1σ/±2σ bands. We report
-   the intraday continuation (does a day that closes beyond +1σ reach +2σ
-   intraday, and how cleanly) and the day-to-day conditional transition
-   (given the previous day closed beyond ±1σ, what does the current day do).
-
-"Clean move" = for the segment from the first 1σ crossing to the first 2σ
-touch: path efficiency |net| / Σ|bar move| ∈ (0,1] (1 = perfectly direct),
-the max adverse excursion back toward the mean (in σ), and the bar count.
-
-Sessions come from libs/market_sessions.py (DST-correct, local wall-clock),
-via server.marketdata._session_utc.
+For each trigger we report, up and down:
+  * P(close beyond each band), P(touch each band);
+  * the full MATRIX  P(touch target band | close beyond breakout band);
+  * CLEAN MOVE per adjacent band segment (0.5→1, 1→1.5, 1.5→2): path
+    efficiency |net| / Σ|bar move|, mean adverse excursion (in σ), bar count.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
 
-from .marketdata import _pretty, _session_utc, load_bars
+from .marketdata import _session_utc, load_bars
 
-MAJORS = ("Tokyo", "London", "NewYork")
-# ordered (reference, trigger, overnight) pairs
-TRANSITIONS = (
-    ("Tokyo", "London", False),
-    ("London", "NewYork", False),
-    ("NewYork", "London", True),
-)
+BANDS = [0.5, 1.0, 1.5, 2.0]
+ADJ = [(0.5, 1.0), (1.0, 1.5), (1.5, 2.0)]
+
+# Distribution segments: key -> display label.
+DIST_SEGMENTS = {
+    "tokyo": "Tokyo",
+    "tokyo_wo_london": "Tokyo ∖ London",
+    "tokyo_x_london": "Tokyo ∩ London",
+    "london": "London",
+    "london_wo_tokyo": "London ∖ Tokyo (after Tokyo)",
+    "london_wo_ny": "London ∖ NY (before NY)",
+    "london_x_ny": "London ∩ NY",
+    "newyork": "New York",
+    "newyork_wo_london": "New York ∖ London (after London)",
+    "fullday": "Full trading day",
+}
+
+# References and their trigger windows.
+REFERENCES = [
+    {"key": "tokyo_wo_london", "label": "Tokyo (without London overlap)",
+     "window": "tokyo_wo_london", "triggers": [
+         {"key": "london_wo_ny", "label": "London ∖ NY", "window": "london_wo_ny"},
+         {"key": "london_x_ny", "label": "London ∩ NY", "window": "london_x_ny"},
+     ]},
+    {"key": "tokyo_x_london", "label": "Tokyo (with London overlap)",
+     "window": "tokyo_x_london", "triggers": [
+         {"key": "london_after_tokyo_wo_ny",
+          "label": "London after Tokyo ∖ NY", "window": "london_after_tokyo_wo_ny"},
+         {"key": "london_after_tokyo_w_ny",
+          "label": "London after Tokyo ∩ NY", "window": "london_after_tokyo_w_ny"},
+     ]},
+    {"key": "london_x_ny", "label": "London (with NY overlap)",
+     "window": "london_x_ny", "triggers": [
+         {"key": "ny_after_london", "label": "NY after London → close",
+          "window": "newyork_wo_london"},
+     ]},
+    {"key": "london_wo_ny", "label": "London (without NY overlap)",
+     "window": "london_wo_ny", "triggers": [
+         {"key": "newyork", "label": "New York session", "window": "newyork"},
+     ]},
+    {"key": "ov_tokyo_london", "label": "Overlap: Tokyo ∩ London",
+     "window": "tokyo_x_london", "triggers": [
+         {"key": "tk_ln_ov_to_next", "label": "End of overlap → next overlap",
+          "window": "tk_ln_ov_to_next"},
+     ]},
+    {"key": "ov_london_ny", "label": "Overlap: London ∩ NY",
+     "window": "london_x_ny", "triggers": [
+         {"key": "ln_ny_ov_to_next",
+          "label": "End of overlap → next overlap (overnight)",
+          "window": "ln_ny_ov_to_next", "overnight": True},
+     ]},
+]
 
 
 # --------------------------------------------------------------------------
-# Per-session, per-day slices
+# Per-day segment windows (DST-correct)
 # --------------------------------------------------------------------------
 
-def _session_days(df: pd.DataFrame, name: str) -> dict[date, pd.DataFrame]:
-    """Map each UTC trading date → that day's bars for one session.
+def _seg_windows(day: date) -> dict[str, tuple[pd.Timestamp, pd.Timestamp]]:
+    tk_o, tk_c = _session_utc("Tokyo", day)
+    ln_o, ln_c = _session_utc("London", day)
+    ny_o, ny_c = _session_utc("NewYork", day)
+    nxt_ln_o, _ = _session_utc("London", day + timedelta(days=1))
+    return {
+        "tokyo": (tk_o, tk_c),
+        "tokyo_wo_london": (tk_o, ln_o),
+        "tokyo_x_london": (ln_o, tk_c),
+        "london": (ln_o, ln_c),
+        "london_wo_tokyo": (tk_c, ln_c),
+        "london_wo_ny": (ln_o, ny_o),
+        "london_x_ny": (ny_o, ln_c),
+        "newyork": (ny_o, ny_c),
+        "newyork_wo_london": (ln_c, ny_c),
+        "fullday": (tk_o, ny_c),
+        "london_after_tokyo_wo_ny": (tk_c, ny_o),
+        "london_after_tokyo_w_ny": (ny_o, ln_c),
+        "tk_ln_ov_to_next": (tk_c, ny_o),
+        "ln_ny_ov_to_next": (ln_c, nxt_ln_o),
+    }
 
-    Tokyo/London/New York windows never cross UTC midnight in the modern
-    era, so the UTC calendar date is a safe day key; the window itself is
-    DST-correct (from _session_utc).
-    """
-    dt = df["Datetime"]
-    out: dict[date, pd.DataFrame] = {}
-    for day in sorted(set(dt.dt.date)):
-        lo, hi = _session_utc(name, day)
-        bars = df[(dt >= lo) & (dt < hi)]
-        if not bars.empty:
-            out[day] = bars
-    return out
 
+# --------------------------------------------------------------------------
+# Distribution summary
+# --------------------------------------------------------------------------
 
-def _session_return(bars: pd.DataFrame) -> float:
-    """Open→close log return of a session's bars."""
-    o = float(bars["Open"].iloc[0])
-    c = float(bars["Close"].iloc[-1])
-    if o <= 0 or c <= 0:
+def _skew(r: np.ndarray) -> float:
+    if r.size < 3:
         return float("nan")
-    return float(np.log(c / o))
+    s = r.std(ddof=0)
+    return 0.0 if s == 0 else float(np.mean(((r - r.mean()) / s) ** 3))
 
 
 def _dist(returns: np.ndarray) -> dict:
-    """Distribution summary + empirical band-exceedance probabilities."""
     r = returns[np.isfinite(returns)]
     if r.size < 5:
         return {"n": int(r.size), "note": "insufficient data"}
     mu = float(np.mean(r))
     sd = float(np.std(r, ddof=1))
-    up1, up2 = mu + sd, mu + 2 * sd
-    dn1, dn2 = mu - sd, mu - 2 * sd
     counts, edges = np.histogram(r, bins=min(40, max(10, r.size // 20)))
+    up = {str(b): float(np.mean(r > mu + b * sd)) for b in BANDS}
+    dn = {str(b): float(np.mean(r < mu - b * sd)) for b in BANDS}
     return {
-        "n": int(r.size),
-        "mean": mu,
-        "std": sd,
-        "skew": float(_skew(r)),
-        "bands": {"up1": up1, "up2": up2, "dn1": dn1, "dn2": dn2},
-        "probs": {
-            "p_up": float(np.mean(r > 0)),
-            "p_gt_1sd": float(np.mean(r > up1)),
-            "p_gt_2sd": float(np.mean(r > up2)),
-            "p_lt_1sd": float(np.mean(r < dn1)),
-            "p_lt_2sd": float(np.mean(r < dn2)),
-        },
+        "n": int(r.size), "mean": mu, "std": sd, "skew": _skew(r),
+        "probs": {"p_up": float(np.mean(r > 0)), "up": up, "down": dn},
         "hist": {"edges": [float(x) for x in edges],
                  "counts": [int(x) for x in counts]},
     }
 
 
-def _skew(r: np.ndarray) -> float:
-    if r.size < 3:
-        return float("nan")
-    m = r.mean()
-    s = r.std(ddof=0)
-    if s == 0:
-        return 0.0
-    return float(np.mean(((r - m) / s) ** 3))
-
-
 # --------------------------------------------------------------------------
-# Clean-move measurement on a trigger session anchored at a reference open
+# Clean-move segment measurement
 # --------------------------------------------------------------------------
 
-def _clean_move(bars: pd.DataFrame, p0: float, b1: float, b2: float,
-                sd: float, direction: str) -> dict:
-    """Measure the move of a trigger session toward the reference ±2σ level.
+def _clean_segment(close_c, high_c, low_c, lvlL, lvlU, sd, up):
+    """Cleanliness of the move from band level lvlL to lvlU within a path.
 
-    p0    reference-session open (anchor for cumulative log return)
-    b1/b2 the reference ±1σ / ±2σ levels on the cumulative-return axis
-    sd    reference σ (for expressing adverse excursion in σ units)
-    Returns per-day event flags and, when the 2σ target is hit, the
-    cleanliness of the 1σ→2σ segment.
+    Returns (reached, efficiency, adverse_sd, bars) or None if not reached.
     """
-    close_c = np.log(bars["Close"].to_numpy() / p0)
-    high_c = np.log(bars["High"].to_numpy() / p0)
-    low_c = np.log(bars["Low"].to_numpy() / p0)
-    close_ret = float(close_c[-1])
-
-    up = direction == "up"
-    breakout = close_ret > b1 if up else close_ret < b1
-    reach1 = (high_c >= b1) if up else (low_c <= b1)
-    reach2 = (high_c >= b2) if up else (low_c <= b2)
-    target = bool(reach2.any())
-
-    out = {"breakout": bool(breakout), "target": target,
-           "efficiency": None, "mae_sd": None, "bars": None}
-    if not (target and reach1.any()):
-        return out
-
-    i1 = int(np.argmax(reach1))                 # first 1σ crossing
-    after = reach2.copy()
+    reach_l = (high_c >= lvlL) if up else (low_c <= lvlL)
+    reach_u = (high_c >= lvlU) if up else (low_c <= lvlU)
+    if not reach_l.any() or not reach_u.any():
+        return None
+    i1 = int(np.argmax(reach_l))
+    after = reach_u.copy()
     after[:i1] = False
     if not after.any():
-        return out
-    i2 = int(np.argmax(after))                  # first 2σ touch at/after i1
+        return None
+    i2 = int(np.argmax(after))
     if i2 < i1:
-        return out
-
+        return None
     seg = close_c[i1:i2 + 1]
-    net = abs(b2 - b1)
+    net = abs(lvlU - lvlL)
     gross = float(np.sum(np.abs(np.diff(seg)))) if seg.size > 1 else net
-    eff = net / gross if gross > 0 else 1.0
+    eff = 1.0 if gross <= 0 else min(net / gross, 1.0)
     if up:
-        mae = max(0.0, b1 - float(low_c[i1:i2 + 1].min()))
+        adverse = max(0.0, lvlL - float(low_c[i1:i2 + 1].min()))
     else:
-        mae = max(0.0, float(high_c[i1:i2 + 1].max()) - b1)
-    out.update(efficiency=float(min(eff, 1.0)),
-               mae_sd=float(mae / sd) if sd > 0 else None,
-               bars=int(i2 - i1))
-    return out
+        adverse = max(0.0, float(high_c[i1:i2 + 1].max()) - lvlL)
+    return True, float(eff), float(adverse / sd) if sd > 0 else 0.0, int(i2 - i1)
 
 
-def _summarize_side(rows: list[dict], n_days: int) -> dict:
-    """Aggregate per-day clean-move rows into conditional probabilities."""
-    n_break = sum(r["breakout"] for r in rows)
-    n_target = sum(r["target"] for r in rows)
-    both = [r for r in rows if r["breakout"] and r["target"]]
-    effs = [r["efficiency"] for r in both if r["efficiency"] is not None]
-    maes = [r["mae_sd"] for r in both if r["mae_sd"] is not None]
-    barss = [r["bars"] for r in both if r["bars"] is not None]
+def _agg_segments(rows):
+    """Aggregate per-day clean-segment tuples into means."""
+    got = [r for r in rows if r is not None]
+    if not got:
+        return {"n": 0, "eff_mean": None, "adverse_mean": None, "bars_mean": None}
+    effs = [g[1] for g in got]
+    advs = [g[2] for g in got]
+    bars = [g[3] for g in got]
+    return {"n": len(got), "eff_mean": float(np.mean(effs)),
+            "adverse_mean": float(np.mean(advs)), "bars_mean": float(np.mean(bars))}
+
+
+# --------------------------------------------------------------------------
+# Fast window slicing
+# --------------------------------------------------------------------------
+
+class _Bars:
+    def __init__(self, df: pd.DataFrame):
+        self.t = df["Datetime"].values.astype("datetime64[ns]")
+        self.o = df["Open"].to_numpy(float)
+        self.h = df["High"].to_numpy(float)
+        self.l = df["Low"].to_numpy(float)
+        self.c = df["Close"].to_numpy(float)
+
+    def idx(self, start, end):
+        i0 = int(np.searchsorted(self.t, np.datetime64(start), "left"))
+        i1 = int(np.searchsorted(self.t, np.datetime64(end), "left"))
+        return i0, i1
+
+
+# --------------------------------------------------------------------------
+# Transition (reference → trigger)
+# --------------------------------------------------------------------------
+
+def _side_stats(mu, sd, close_rets, extremes, up, paths):
+    """Build matrix + clean segments for one side (up or down)."""
+    levels = [mu + (b if up else -b) * sd for b in BANDS]
+    nb = len(BANDS)
+    beyond = np.zeros(nb)          # close beyond band i
+    touch = np.zeros(nb)           # touched band j
+    joint = np.zeros((nb, nb))     # close beyond i AND touch j
+    n = 0
+    for cr, ext in zip(close_rets, extremes):
+        n += 1
+        cb = [(cr > levels[i]) if up else (cr < levels[i]) for i in range(nb)]
+        tc = [(ext >= levels[j]) if up else (ext <= levels[j]) for j in range(nb)]
+        for i in range(nb):
+            beyond[i] += cb[i]
+            touch[i] += tc[i]
+            if cb[i]:
+                for j in range(nb):
+                    if tc[j]:
+                        joint[i][j] += 1
+    matrix = [[(joint[i][j] / beyond[i]) if beyond[i] else None
+               for j in range(nb)] for i in range(nb)]
+
+    clean = []
+    for bL, bU in ADJ:
+        lvlL = mu + (bL if up else -bL) * sd
+        lvlU = mu + (bU if up else -bU) * sd
+        rows = [_clean_segment(cc, hc, lc, lvlL, lvlU, sd, up) for cc, hc, lc in paths]
+        seg = _agg_segments(rows)
+        seg.update(**{"from": bL, "to": bU})
+        clean.append(seg)
+
+    return {
+        "bands": BANDS,
+        "n": n,
+        "p_breakout": [(beyond[i] / n) if n else None for i in range(nb)],
+        "p_touch": [(touch[i] / n) if n else None for i in range(nb)],
+        "breakout_counts": [int(beyond[i]) for i in range(nb)],
+        "matrix": matrix,
+        "clean_segments": clean,
+    }
+
+
+def _transition(bars, segwins, days, ref_win, trig_win, mu, sd):
+    close_up, ext_up, paths_up = [], [], []
+    close_dn, ext_dn, paths_dn = [], [], []
+    n_days = 0
+    for day in days:
+        rw = segwins[day].get(ref_win)
+        tw = segwins[day].get(trig_win)
+        if rw is None or tw is None or rw[0] >= rw[1] or tw[0] >= tw[1]:
+            continue
+        ri0, ri1 = bars.idx(*rw)
+        if ri1 <= ri0:
+            continue
+        p0 = bars.o[ri0]
+        if p0 <= 0:
+            continue
+        ti0, ti1 = bars.idx(*tw)
+        if ti1 <= ti0:
+            continue
+        cc = np.log(bars.c[ti0:ti1] / p0)
+        hc = np.log(bars.h[ti0:ti1] / p0)
+        lc = np.log(bars.l[ti0:ti1] / p0)
+        n_days += 1
+        close_up.append(float(cc[-1])); ext_up.append(float(hc.max()))
+        paths_up.append((cc, hc, lc))
+        close_dn.append(float(cc[-1])); ext_dn.append(float(lc.min()))
+        paths_dn.append((cc, hc, lc))
     return {
         "n_days": n_days,
-        "n_breakout": int(n_break),
-        "n_target": int(n_target),
-        "p_breakout": n_break / n_days if n_days else None,
-        "p_target": n_target / n_days if n_days else None,
-        "p_target_given_breakout": (len(both) / n_break) if n_break else None,
-        "clean": {
-            "n": len(both),
-            "eff_mean": float(np.mean(effs)) if effs else None,
-            "eff_median": float(np.median(effs)) if effs else None,
-            "mae_sd_mean": float(np.mean(maes)) if maes else None,
-            "bars_mean": float(np.mean(barss)) if barss else None,
-        },
-    }
-
-
-# --------------------------------------------------------------------------
-# Study 1: session transitions
-# --------------------------------------------------------------------------
-
-def _transition(df: pd.DataFrame, ref: str, trig: str, overnight: bool,
-                sess_days: dict[str, dict]) -> dict:
-    ref_days = sess_days[ref]
-    trig_days = sess_days[trig]
-
-    ref_returns = np.array([_session_return(b) for b in ref_days.values()])
-    ref_stats = _dist(ref_returns)
-    if "note" in ref_stats:
-        return {"reference": _pretty(ref), "trigger": _pretty(trig),
-                "overnight": overnight, "note": ref_stats["note"]}
-    mu, sd = ref_stats["mean"], ref_stats["std"]
-    up1, up2 = mu + sd, mu + 2 * sd
-    dn1, dn2 = mu - sd, mu - 2 * sd
-
-    up_rows, dn_rows = [], []
-    for day, rbars in ref_days.items():
-        tday = day + pd.Timedelta(days=1) if overnight else day
-        tday = tday.date() if hasattr(tday, "date") else tday
-        tbars = trig_days.get(tday)
-        if tbars is None:
-            continue
-        p0 = float(rbars["Open"].iloc[0])
-        if p0 <= 0:
-            continue
-        up_rows.append(_clean_move(tbars, p0, up1, up2, sd, "up"))
-        dn_rows.append(_clean_move(tbars, p0, dn1, dn2, sd, "down"))
-
-    n = len(up_rows)
-    return {
-        "reference": _pretty(ref),
-        "trigger": _pretty(trig),
-        "overnight": overnight,
-        "ref_mean": mu,
-        "ref_std": sd,
-        "bands": {"up1": up1, "up2": up2, "dn1": dn1, "dn2": dn2},
-        "up": _summarize_side(up_rows, n),
-        "down": _summarize_side(dn_rows, n),
-    }
-
-
-# --------------------------------------------------------------------------
-# Study 2: day-over-day
-# --------------------------------------------------------------------------
-
-def _daily_frames(df: pd.DataFrame) -> dict[date, pd.DataFrame]:
-    dt = df["Datetime"]
-    return {day: df[dt.dt.date == day] for day in sorted(set(dt.dt.date))}
-
-
-def _daily_study(df: pd.DataFrame) -> dict:
-    days = _daily_frames(df)
-    ordered = sorted(days)
-    rets = np.array([_session_return(days[d]) for d in ordered])
-    stats = _dist(rets)
-    if "note" in stats:
-        return {"note": stats["note"]}
-    mu, sd = stats["mean"], stats["std"]
-    up1, up2 = mu + sd, mu + 2 * sd
-    dn1, dn2 = mu - sd, mu - 2 * sd
-
-    # intraday continuation: each day anchored at its own open
-    up_rows, dn_rows = [], []
-    for d in ordered:
-        bars = days[d]
-        p0 = float(bars["Open"].iloc[0])
-        if p0 <= 0:
-            continue
-        up_rows.append(_clean_move(bars, p0, up1, up2, sd, "up"))
-        dn_rows.append(_clean_move(bars, p0, dn1, dn2, sd, "down"))
-    n = len(up_rows)
-
-    # day-to-day conditional: given prev day beyond ±1σ, what does today do?
-    def _after(mask_prev):
-        idx = [i for i in range(1, len(rets))
-               if np.isfinite(rets[i - 1]) and mask_prev(rets[i - 1])
-               and np.isfinite(rets[i])]
-        nxt = rets[idx]
-        if nxt.size == 0:
-            return {"n": 0}
-        return {
-            "n": int(nxt.size),
-            "p_next_up": float(np.mean(nxt > 0)),
-            "p_next_gt_1sd": float(np.mean(nxt > up1)),
-            "p_next_lt_1sd": float(np.mean(nxt < dn1)),
-            "mean_next": float(np.mean(nxt)),
-        }
-
-    return {
-        **stats,
-        "intraday": {
-            "up": _summarize_side(up_rows, n),
-            "down": _summarize_side(dn_rows, n),
-        },
-        "day_to_day": {
-            "after_up_1sd": _after(lambda x: x > up1),
-            "after_down_1sd": _after(lambda x: x < dn1),
-        },
+        "up": _side_stats(mu, sd, close_up, ext_up, True, paths_up),
+        "down": _side_stats(mu, sd, close_dn, ext_dn, False, paths_dn),
     }
 
 
@@ -301,30 +296,84 @@ def _daily_study(df: pd.DataFrame) -> dict:
 # Public entry point
 # --------------------------------------------------------------------------
 
-def analyze(asset: str, tf: str) -> dict:
-    """Full behaviour report for one asset + intraday timeframe."""
+def available_range(asset: str, tf: str) -> dict:
+    df = load_bars(asset, tf).dropna(subset=["Datetime"])
+    if df.empty:
+        raise ValueError(f"No {tf} data for {asset}")
+    d = df["Datetime"]
+    return {"start": d.iloc[0].date().isoformat(),
+            "end": d.iloc[-1].date().isoformat(),
+            "n_days": int(d.dt.date.nunique())}
+
+
+def analyze(asset: str, tf: str, start: date | None = None,
+            end: date | None = None) -> dict:
     df = load_bars(asset, tf).dropna(subset=["Datetime"]).sort_values("Datetime")
     df = df.reset_index(drop=True)
+    full = (df["Datetime"].iloc[0].date().isoformat(),
+            df["Datetime"].iloc[-1].date().isoformat()) if len(df) else (None, None)
+
+    if start is not None:
+        df = df[df["Datetime"].dt.date >= start]
+    if end is not None:
+        df = df[df["Datetime"].dt.date <= end]
+    df = df.reset_index(drop=True)
     if len(df) < 50:
-        raise ValueError(f"Not enough {tf} bars for {asset}")
+        raise ValueError(f"Not enough {tf} bars for {asset} in that range")
 
-    sess_days = {name: _session_days(df, name) for name in MAJORS}
-    sessions = {}
-    for name in MAJORS:
-        rets = np.array([_session_return(b) for b in sess_days[name].values()])
-        sessions[_pretty(name)] = _dist(rets)
+    bars = _Bars(df)
+    days = sorted(set(df["Datetime"].dt.date))
+    segwins = {day: _seg_windows(day) for day in days}
 
-    transitions = [_transition(df, ref, trig, overnight, sess_days)
-                   for ref, trig, overnight in TRANSITIONS]
+    # distributions
+    seg_returns = {k: [] for k in DIST_SEGMENTS}
+    for day in days:
+        w = segwins[day]
+        for k in DIST_SEGMENTS:
+            s, e = w[k]
+            if s >= e:
+                continue
+            i0, i1 = bars.idx(s, e)
+            if i1 <= i0:
+                continue
+            o, c = bars.o[i0], bars.c[i1 - 1]
+            if o > 0 and c > 0:
+                seg_returns[k].append(np.log(c / o))
+    sessions = {DIST_SEGMENTS[k]: _dist(np.array(v)) for k, v in seg_returns.items()}
+
+    # references -> triggers
+    references = []
+    for ref in REFERENCES:
+        ref_rets = []
+        for day in days:
+            rw = segwins[day].get(ref["window"])
+            if rw is None or rw[0] >= rw[1]:
+                continue
+            i0, i1 = bars.idx(*rw)
+            if i1 <= i0:
+                continue
+            o, c = bars.o[i0], bars.c[i1 - 1]
+            if o > 0 and c > 0:
+                ref_rets.append(np.log(c / o))
+        rdist = _dist(np.array(ref_rets))
+        entry = {"key": ref["key"], "label": ref["label"],
+                 "reference_dist": rdist, "triggers": []}
+        if "note" not in rdist and rdist["std"] > 0:
+            mu, sd = rdist["mean"], rdist["std"]
+            for trig in ref["triggers"]:
+                t = _transition(bars, segwins, days, ref["window"],
+                                trig["window"], mu, sd)
+                t.update(key=trig["key"], label=trig["label"],
+                         overnight=trig.get("overnight", False))
+                entry["triggers"].append(t)
+        references.append(entry)
 
     return {
-        "asset": asset,
-        "timeframe": tf,
-        "n_bars": int(len(df)),
-        "n_days": len(set(df["Datetime"].dt.date)),
-        "date_range": [df["Datetime"].iloc[0].date().isoformat(),
-                       df["Datetime"].iloc[-1].date().isoformat()],
+        "asset": asset, "timeframe": tf,
+        "n_bars": int(len(df)), "n_days": len(days),
+        "date_range": [days[0].isoformat(), days[-1].isoformat()],
+        "available_range": list(full),
+        "bands": BANDS,
         "sessions": sessions,
-        "transitions": transitions,
-        "daily": _daily_study(df),
+        "references": references,
     }
