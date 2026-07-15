@@ -116,6 +116,24 @@ table.data.matrix th, table.data.matrix td {
 }
 table.data.matrix td { min-width: 42px; }
 
+.tile-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, 1fr);
+}
+@media (min-width: 700px)  { .tile-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1100px) { .tile-grid { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 1600px) { .tile-grid { grid-template-columns: repeat(6, 1fr); } }
+.stat-tile {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.stat-value { font-size: 20px; font-weight: 700; }
+.stat-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.stat-hint { font-size: 11px; margin-top: 2px; }
+
 .page { padding: 14px; max-width: 1900px; margin: 0 auto; }
 
 /* Sections grid: 1 col on mobile, 2 on laptop, dense multi-col on TV. */

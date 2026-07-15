@@ -146,6 +146,41 @@ export interface AssetStatsReport {
 }
 export interface AssetRange { start: string; end: string; n_days: number }
 
+// --- day-over-day + quant character ---
+export interface DayToDayState {
+  key: string; label: string; n: number;
+  p_next_up?: number; p_next_gt_1sd?: number; p_next_lt_1sd?: number; mean_next?: number;
+}
+export interface Performance {
+  note?: string;
+  n_days?: number; ann_return?: number; ann_vol?: number;
+  sharpe?: number | null; sortino?: number | null; calmar?: number | null;
+  max_drawdown?: number; max_dd_duration_days?: number; current_drawdown?: number;
+  var_95?: number; cvar_95?: number; var_99?: number; cvar_99?: number;
+  win_rate?: number; avg_win?: number | null; avg_loss?: number | null;
+  profit_factor?: number | null; omega_0?: number | null; tail_ratio?: number | null;
+  best_day?: number; worst_day?: number; pct_positive?: number; skew?: number;
+}
+export interface QuantCharacter {
+  note?: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  [k: string]: any;
+}
+export interface QuantStatsReport {
+  asset: string; timeframe: string; n_bars: number; n_days: number;
+  date_range: [string, string]; available_range: [string, string]; bands: number[];
+  daily_distribution: DistStats;
+  intraday_continuation: { note?: string; n_days?: number; up?: SideStats; down?: SideStats };
+  day_to_day: DayToDayState[];
+  gaps: { note?: string; dist?: DistStats; p_gap_up?: number;
+    fill_prob_up?: number; fill_prob_down?: number;
+    continue_up?: number; continue_down?: number };
+  streaks: { note?: string; p_up?: number; p_up_given_up?: number;
+    p_up_given_2up?: number; longest_up?: number; longest_down?: number };
+  performance: Performance;
+  character: QuantCharacter;
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** Stored UTC ISO → value for a datetime-local input in the browser's zone. */
