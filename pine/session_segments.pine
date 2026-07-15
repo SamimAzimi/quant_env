@@ -1,0 +1,106 @@
+//@version=6
+// =============================================================================
+// Session Segments (overlap / no-overlap map)
+// -----------------------------------------------------------------------------
+// Shade each trading day into the five reference segments used by the web
+// app's Asset-Stats engine — every major session's solo (no-overlap) portion
+// plus the two overlap ranges:
+//
+//   1. Tokyo (solo)        Tokyo before London opens          [Tokyo ∖ London]
+//   2. Tokyo ∩ London      the Tokyo/London overlap           [overlap]
+//   3. London (solo)       London after Tokyo, before NY      [London ∖ Tokyo ∖ NY]
+//   4. London ∩ New York   the London/NY overlap              [overlap]
+//   5. New York (solo)     New York after London closes       [New York ∖ London]
+//
+// The five zones are mutually exclusive and, together, cover the active part of
+// the day (off-hours stay unshaded). Sessions are defined in each centre's own
+// timezone, so TradingView applies DST automatically. Use an intraday chart.
+// =============================================================================
+indicator("Session Segments (overlap map)", overlay = true,
+     max_labels_count = 300)
+
+if not timeframe.isintraday
+    runtime.error("Use an intraday timeframe (< 1D) — sessions need sub-daily bars.")
+
+// ----------------------------- inputs ----------------------------------------
+grpS = "Sessions (local wall-clock, DST via timezone)"
+tkSess = input.session("0900-1800", "Tokyo hours",     group = grpS)
+tkTz   = input.string ("Asia/Tokyo", "Tokyo timezone", group = grpS)
+lnSess = input.session("0800-1700", "London hours",    group = grpS)
+lnTz   = input.string ("Europe/London", "London timezone", group = grpS)
+nySess = input.session("0800-1700", "New York hours",  group = grpS)
+nyTz   = input.string ("America/New_York", "New York timezone", group = grpS)
+
+grpZ = "Segments to shade"
+sTk   = input.bool(true, "Tokyo (solo)",      group = grpZ)
+sTkLn = input.bool(true, "Tokyo ∩ London",    group = grpZ)
+sLn   = input.bool(true, "London (solo)",     group = grpZ)
+sLnNy = input.bool(true, "London ∩ New York", group = grpZ)
+sNy   = input.bool(true, "New York (solo)",   group = grpZ)
+
+grpD = "Display"
+showBg     = input.bool(true,  "Shade segments (background)", group = grpD)
+showLabels = input.bool(false, "Label each segment",         group = grpD)
+showBounds = input.bool(false, "Vertical line at boundaries", group = grpD)
+showLegend = input.bool(true,  "Legend",                     group = grpD)
+
+cTk   = input.color(color.new(color.red,    88), "Tokyo colour",        group = grpD)
+cTkLn = input.color(color.new(color.orange, 78), "Tokyo∩London colour", group = grpD)
+cLn   = input.color(color.new(color.blue,   88), "London colour",       group = grpD)
+cLnNy = input.color(color.new(color.teal,   78), "London∩NY colour",    group = grpD)
+cNy   = input.color(color.new(color.green,  88), "New York colour",     group = grpD)
+
+// ----------------------------- session state ---------------------------------
+tkIn = not na(time(timeframe.period, tkSess, tkTz))
+lnIn = not na(time(timeframe.period, lnSess, lnTz))
+nyIn = not na(time(timeframe.period, nySess, nyTz))
+
+// Five mutually-exclusive zones (overlaps take precedence over solo).
+zTkLn = tkIn and lnIn                         // Tokyo ∩ London
+zLnNy = lnIn and nyIn                         // London ∩ New York
+zTk   = tkIn and not lnIn                     // Tokyo before London
+zLn   = lnIn and not tkIn and not nyIn        // London, after Tokyo & before NY
+zNy   = nyIn and not lnIn                     // New York after London
+
+// ----------------------------- shading ---------------------------------------
+bg = (zTkLn and sTkLn) ? cTkLn :
+     (zLnNy and sLnNy) ? cLnNy :
+     (zTk   and sTk)   ? cTk   :
+     (zLn   and sLn)   ? cLn   :
+     (zNy   and sNy)   ? cNy   : na
+bgcolor(showBg ? bg : na, title = "Segment shading")
+
+// ----------------------------- labels & bounds --------------------------------
+zoneName = zTkLn ? "Tokyo ∩ London" :
+           zLnNy ? "London ∩ NY"    :
+           zTk   ? "Tokyo"          :
+           zLn   ? "London"         :
+           zNy   ? "New York"       : ""
+zoneCol  = zTkLn ? color.orange :
+           zLnNy ? color.teal   :
+           zTk   ? color.red    :
+           zLn   ? color.blue   :
+           zNy   ? color.green  : color.gray
+
+changed = zoneName != zoneName[1]
+if showLabels and changed and zoneName != ""
+    label.new(bar_index, high, zoneName, style = label.style_label_down,
+         color = color.new(zoneCol, 20), textcolor = color.white, size = size.tiny)
+if showBounds and changed
+    line.new(bar_index, low, bar_index, high, xloc = xloc.bar_index,
+         extend = extend.both, color = color.new(color.gray, 60),
+         style = line.style_dotted)
+
+// ----------------------------- legend -----------------------------------------
+var table lg = table.new(position.top_right, 2, 5, border_width = 1)
+if showLegend and barstate.islast
+    table.cell(lg, 0, 0, "  ", bgcolor = cTkLn)
+    table.cell(lg, 1, 0, "Tokyo ∩ London", text_color = color.white, text_size = size.tiny)
+    table.cell(lg, 0, 1, "  ", bgcolor = cTk)
+    table.cell(lg, 1, 1, "Tokyo (solo)", text_color = color.white, text_size = size.tiny)
+    table.cell(lg, 0, 2, "  ", bgcolor = cLn)
+    table.cell(lg, 1, 2, "London (solo)", text_color = color.white, text_size = size.tiny)
+    table.cell(lg, 0, 3, "  ", bgcolor = cLnNy)
+    table.cell(lg, 1, 3, "London ∩ New York", text_color = color.white, text_size = size.tiny)
+    table.cell(lg, 0, 4, "  ", bgcolor = cNy)
+    table.cell(lg, 1, 4, "New York (solo)", text_color = color.white, text_size = size.tiny)
