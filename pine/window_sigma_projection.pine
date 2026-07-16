@@ -1,0 +1,156 @@
+//@version=6
+// =============================================================================
+// Window σ-Projection
+// -----------------------------------------------------------------------------
+// Pick a time window (default: the London "solo" stretch — after Tokyo closes,
+// before New York opens). Every day, the window's log return
+//     r = ln(window_close / window_open)
+// is collected into a rolling distribution -> mean (mu) and std (sigma).
+//
+// When the window ENDS, the levels
+//     mean:  anchor * exp(mu)
+//     bands: anchor * exp(mu ± k*sigma)   for k in {0.5, 1, 1.5, 2, 2.4, 3}
+// are drawn from the window's end until the end of that day, so you can watch
+// how the rest of the day behaves against the window's expected range. The
+// anchor is the window OPEN by default (matching the web app's Asset-Stats
+// engine); switch it to the window CLOSE to project from where price actually
+// finished.
+//
+// Historical days keep their projections on screen as far back as
+// max_lines_count allows (~35 days with all levels on). The distribution is
+// CAUSAL: each day's levels use only returns known at that moment, so history
+// looks exactly like live did.
+//
+// The date range is selectable, and the timezone is a dropdown — the window
+// hours are interpreted in that zone, so DST is applied automatically.
+// NOTE: the "London solo" boundaries are set by Tokyo's close (JST, no DST)
+// and New York's open (EST/EDT), so a fixed local window is an approximation
+// part of the year — adjust the hours if you need exact alignment.
+// =============================================================================
+indicator("Window σ-Projection", overlay = true,
+     max_lines_count = 500, max_labels_count = 500)
+
+if not timeframe.isintraday
+    runtime.error("Use an intraday timeframe (< 1D) — the window needs sub-daily bars.")
+
+// ----------------------------- inputs ----------------------------------------
+grpW = "Window"
+winSess = input.session("1000-1300", "Window hours (in selected timezone)", group = grpW,
+     tooltip = "Default ≈ London solo: after Tokyo close (~10:00 London), before NY open (~13:00 London).")
+winTz = input.string("Europe/London", "Timezone", group = grpW, options =
+     ["Europe/London", "UTC", "America/New_York", "America/Chicago",
+      "Europe/Berlin", "Europe/Zurich", "Asia/Tokyo", "Asia/Hong_Kong",
+      "Asia/Singapore", "Asia/Dubai", "Asia/Kabul", "Australia/Sydney"])
+
+grpR = "Date range"
+rngStart = input.time(timestamp("2020-01-01T00:00:00"), "From", group = grpR)
+rngEnd   = input.time(timestamp("2099-01-01T00:00:00"), "To",   group = grpR)
+
+grpM = "Distribution"
+lookback   = input.int(250, "Rolling window (days)",        minval = 20, group = grpM)
+minSamples = input.int(30,  "Min days before projecting",   minval = 2,  group = grpM)
+anchorMode = input.string("Window open", "Anchor levels at", group = grpM,
+     options = ["Window open", "Window close"],
+     tooltip = "Window open matches the web app's cumulative-return axis; window close projects from where the window actually finished.")
+
+grpD = "Display"
+showMean   = input.bool(true, "Mean line (bold)",        group = grpD)
+showLabels = input.bool(true, "k-labels at line start",  group = grpD)
+kList      = input.string("0.5,1,1.5,2,2.4,3", "σ multiples (comma-separated)", group = grpD)
+colUp   = input.color(color.teal, "Upper bands", group = grpD)
+colDn   = input.color(color.red,  "Lower bands", group = grpD)
+colMean = input.color(color.gray, "Mean",        group = grpD)
+
+// parse the σ multiples once
+var array<float> ks = array.new<float>()
+if barstate.isfirst
+    parts = str.split(kList, ",")
+    for p in parts
+        v = str.tonumber(str.trim(p))
+        if not na(v) and v > 0
+            array.push(ks, v)
+    array.sort(ks, order.ascending)
+
+// ----------------------------- window & day state -----------------------------
+inWin = not na(time(timeframe.period, winSess, winTz))
+inRange = time >= rngStart and time <= rngEnd
+newDay = dayofmonth(time, winTz) != dayofmonth(time[1], winTz)
+
+var array<float> rets = array.new<float>()
+var float mu = na
+var float sd = na
+var float winOpen = na
+var bool projecting = false
+var array<line> live = array.new<line>()
+
+// styling per multiple: integers solid, fractions dotted; deeper k = stronger
+f_style(float k) => k % 1.0 == 0.0 ? line.style_solid : line.style_dotted
+f_transp(float k) =>
+    kmax = array.size(ks) > 0 ? array.get(ks, array.size(ks) - 1) : 3.0
+    int(math.max(8, 70 - 62 * k / math.max(kmax, 1.0)))
+
+// stop extending at the end of the day (in the selected timezone)
+if newDay
+    projecting := false
+    array.clear(live)
+
+// track the running window open
+if inWin and not inWin[1]
+    winOpen := open
+
+// window just closed -> update the distribution, then project
+if inWin[1] and not inWin and not na(winOpen) and winOpen > 0
+    r = math.log(close[1] / winOpen)
+    if not na(r)
+        array.push(rets, r)
+        if array.size(rets) > lookback
+            array.shift(rets)
+        if array.size(rets) >= 2
+            mu := array.avg(rets)
+            sd := array.stdev(rets, false)          // sample std (ddof=1)
+    if inRange and not na(mu) and not na(sd) and array.size(rets) >= minSamples
+        float anchor = anchorMode == "Window open" ? winOpen : close[1]
+        projecting := true
+        array.clear(live)
+        if showMean
+            float m = anchor * math.exp(mu)
+            ln = line.new(bar_index, m, bar_index, m, xloc = xloc.bar_index,
+                 color = color.new(colMean, 0), width = 2)
+            array.push(live, ln)
+            if showLabels
+                label.new(bar_index, m, "μ", xloc = xloc.bar_index,
+                     style = label.style_none, textcolor = colMean, size = size.tiny)
+        for i = 0 to array.size(ks) - 1
+            float k = array.get(ks, i)
+            float up = anchor * math.exp(mu + k * sd)
+            float dn = anchor * math.exp(mu - k * sd)
+            lu = line.new(bar_index, up, bar_index, up, xloc = xloc.bar_index,
+                 color = color.new(colUp, f_transp(k)), style = f_style(k))
+            ld = line.new(bar_index, dn, bar_index, dn, xloc = xloc.bar_index,
+                 color = color.new(colDn, f_transp(k)), style = f_style(k))
+            array.push(live, lu)
+            array.push(live, ld)
+            if showLabels
+                label.new(bar_index, up, "+" + str.tostring(k) + "σ", xloc = xloc.bar_index,
+                     style = label.style_none, textcolor = color.new(colUp, 20), size = size.tiny)
+                label.new(bar_index, dn, "−" + str.tostring(k) + "σ", xloc = xloc.bar_index,
+                     style = label.style_none, textcolor = color.new(colDn, 20), size = size.tiny)
+
+// extend the active projection bar by bar until the day ends
+if projecting
+    for ln in live
+        line.set_x2(ln, bar_index)
+
+// shade the reference window itself, faintly, so the source is visible
+bgcolor(inWin and inRange ? color.new(color.blue, 92) : na, title = "Window shading")
+
+// info panel
+var table tb = table.new(position.top_right, 2, 3, border_width = 1)
+if barstate.islast
+    table.cell(tb, 0, 0, "window",  text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 0, winSess + " " + winTz, text_color = color.white, text_size = size.tiny)
+    table.cell(tb, 0, 1, "μ / σ",  text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 1, na(mu) ? "—" : str.tostring(mu * 100, "#.###") + "% / " +
+         str.tostring(sd * 100, "#.###") + "%", text_color = color.white, text_size = size.tiny)
+    table.cell(tb, 0, 2, "days",   text_color = color.gray, text_size = size.tiny)
+    table.cell(tb, 1, 2, str.tostring(array.size(rets)), text_color = color.white, text_size = size.tiny)
