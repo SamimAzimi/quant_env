@@ -1,8 +1,58 @@
-"""session_sigma_strategy.py — analyze-segment → trigger-segment σ plays.
+"""session_sigma_strategy.py — evidence-based session σ plays.
 
 Pipeline-compatible: same ``(run_id=, **params).backtest(df) -> (trades_df,
 details)`` shape and ledger as the other strategies (CFDCostModel →
-CFDAccountSimulator → PerformanceAnalytics → ResultStore → dashboard).
+CFDAccountSimulator → PerformanceAnalytics → store → dashboard).
+
+Empirical basis
+───────────────
+The rules below are calibrated on the band-behaviour study
+(``server/band_behavior.py`` — Asset Stats → band study, sections A–G) run
+on XAUUSD 5m, 2024-06-30 → 2026-07-16 (523–526 days per pair; all four
+session pairs verdict "structured", 7/7 tests rejecting Gaussian noise).
+What the study established, and what each finding does to the strategy:
+
+1. The mean is NOT a magnet. From every occupied band the next close moves
+   toward the analyze mean less than 50% of the time (0.24–0.48), price
+   beyond ±4σ re-enters the grid on only 7–12% of next candles, and the
+   tail bands are the stickiest states of the whole transition matrix
+   (diagonal 0.88–0.93).
+   → the old EXTENSION-FADE setup (limit against a stretch, TP = μ) is
+     REMOVED. It stood directly in front of measured persistence.
+
+2. Breakouts persist. Outer-band hits cluster massively (runs-test z from
+   −34 down to −103: streaks, not chop), ±2σ→tail continuation is the
+   historical norm, and band exits jump 1.3–3.6 bands per candle.
+   → NEW BREAKOUT-CONTINUATION setup: the first trigger-segment close
+     beyond ±breakout_k·σ enters WITH the break, one trade per direction
+     per transition (hits cluster — the first hit marks the episode),
+     scale-out at pair-calibrated outer levels.
+
+3. Adverse excursion sets the minimum stop, per pair. Typical wrong-way
+   travel en route to a target: ≈0.26σ (Tokyo→overlap), ≈0.7σ
+   (overlap→London solo), ≈1.0σ (London solo→US overlap), ≈0.37σ
+   (US overlap→NY solo).
+   → the universal 0.5σ stop is REMOVED; each pair's ``sl_k`` covers its
+     measured adverse excursion plus a buffer.
+
+4. Ruler quality depends on the pair. σ from a quiet segment applied to a
+   louder one is decorative: overlap→London solo puts 8% of closes beyond
+   ±4σ and London solo→US overlap puts ≈35% beyond ±4σ (KS 0.293) — the
+   1/2/3σ targets there are incidental traffic, not levels.
+   → MEAN-CROSS momentum is kept only on the two calibrated rulers
+     (Tokyo→overlap KS 0.174, US overlap→NY solo KS 0.146); on the two
+     under-scaled pairs only the breakout setup runs, with targets pushed
+     out to where the study says price actually travels.
+
+5. Price passes through the mean instead of resting there (centre bands
+   hold ~3–5% vs 9.9% expected; centre diagonal 0.20–0.46) and sides of μ
+   run in streaks (runs z −30…−90).
+   → MEAN-CROSS is kept on calibrated pairs: when the analyze segment
+     closed near μ and the trigger's running mean crosses μ, trade in the
+     direction of the cross. 3-lot scale-out at μ±1/2/3σ with breakeven
+     after lot 2 stays — exit direction from inner bands is ~50/50, so
+     banking the near bands and letting a protected runner ride the streak
+     is exactly what the escape/oscillation numbers support.
 
 The play
 ────────
@@ -12,27 +62,19 @@ via libs/market_sessions.py local wall-clock definitions):
     Tokyo(solo) → Tokyo∩London → London(solo) → London∩NY → NewYork(solo)
 
 Every consecutive pair is an (ANALYZE, TRIGGER) transition — four per day.
+ANALYZE: μ and σ of the analyze segment's closes. TRIGGER (per-pair
+parameters from ``PAIR_PARAMS``, override via the constructor):
 
-ANALYZE — over the analyze segment's bar closes compute the price mean μ and
-std σ, and mark the levels μ ± kσ for k = 0.5, 1.0, …, 3.0.
+• BREAKOUT CONTINUATION (all pairs): first trigger close beyond
+  μ ± breakout_k·σ → enter with the break at that close, one per direction
+  per transition. Targets: the pair's ``breakout_tp_ks`` σ-levels beyond
+  the entry (levels the entry already passed are dropped; if none remain
+  the break is skipped). SL = entry ∓ sl_k·σ; breakeven after lot 2.
 
-TRIGGER — two setups, judged by where the analyze segment CLOSED:
-
-1. MEAN-CROSS (analyze close within ±0.5σ of μ):
-   • close above μ → watch the trigger segment's RUNNING MEAN of closes;
-     the first bar it drops below μ → SHORT 3 lots at that bar's close.
-   • close below μ → mirror: running mean rises above μ → LONG 3 lots.
-   Initial SL for every lot: 0.5σ against the trade. Scale-out targets:
-   lot 1 at the 1st σ, lot 2 at the 2nd σ, lot 3 at the 3rd σ (in the trade
-   direction from μ; multiples configurable via ``tp_ks``). When lot 2's
-   target fills, the remaining lot's stop moves to entry (breakeven).
-
-2. EXTENSION FADE (analyze close already beyond ±0.5σ, in level k):
-   • above → SHORT limit one level further at μ + (k+0.5)σ;
-   • below → LONG limit at μ − (k+0.5)σ.
-   SL 0.5σ beyond the entry level; TP = μ (the analyze segment's mean) for
-   all 3 lots. Unfilled orders are recorded as no-entry rows. Closes beyond
-   the top marked level (k ≥ 3) are skipped — there is no level above.
+• MEAN-CROSS (calibrated pairs only, analyze close within ±0.5σ of μ):
+  the first trigger bar whose running mean of closes crosses μ → 3 lots in
+  the cross direction, TPs at μ±1/2/3σ, SL = sl_k·σ against the trade,
+  breakeven after lot 2.
 
 Any lot still open when the trigger segment ends is flattened at its last
 close (``segment_close``). Exits are conservative: SL checked before TP on
@@ -41,11 +83,11 @@ analyze stats are fully known before the trigger segment starts.
 
 Returns ``(trades_df, details)``; ``details["trades"]`` is the full per-lot
 ledger (with ``sl_price``) the account simulator needs, and
-``details["segments"]`` records each transition's μ/σ/deviation/setup.
+``details["segments"]`` records each transition's μ/σ/deviation/setups.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -61,6 +103,32 @@ SEGMENT_LABEL = {
     "tokyo_solo": "Tokyo (solo)", "tokyo_london": "Tokyo ∩ London",
     "london_solo": "London (solo)", "london_ny": "London ∩ NY",
     "ny_solo": "New York (solo)",
+}
+
+# Per-pair calibration from the XAUUSD 5m band study (see module docstring).
+#   mean_cross      — only where the analyze σ is a trustworthy ruler for
+#                     the trigger segment (KS 0.174 / 0.146; the other two
+#                     pairs put 8% / 35% of closes beyond ±4σ).
+#   sl_k            — measured mean adverse excursion + buffer
+#                     (≈0.26σ / 0.7σ / 1.0σ / 0.37σ per pair).
+#   breakout_tp_ks  — σ-levels sized by measured tail reach: penetration
+#                     beyond ±4σ averages ≈0.4σ / 1.0σ / 1.6σ / 0.6σ, and
+#                     the two under-scaled rulers see the tails on
+#                     22–28% / 42–44% of days, so their targets sit further
+#                     out.
+PAIR_PARAMS: Dict[Tuple[str, str], Dict] = {
+    ("tokyo_solo", "tokyo_london"): dict(
+        mean_cross=True,  sl_k=0.50, breakout_k=2.0,
+        breakout_tp_ks=(3.0, 3.5, 4.0)),
+    ("tokyo_london", "london_solo"): dict(
+        mean_cross=False, sl_k=1.00, breakout_k=2.0,
+        breakout_tp_ks=(3.0, 4.0, 5.0)),
+    ("london_solo", "london_ny"): dict(
+        mean_cross=False, sl_k=1.25, breakout_k=2.0,
+        breakout_tp_ks=(4.0, 5.0, 6.0)),
+    ("london_ny", "ny_solo"): dict(
+        mean_cross=True,  sl_k=0.60, breakout_k=2.0,
+        breakout_tp_ks=(3.0, 3.5, 4.0)),
 }
 
 
@@ -86,12 +154,11 @@ def segment_windows(day: date) -> Dict[str, Tuple[pd.Timestamp, pd.Timestamp]]:
 
 
 class SessionSigmaStrategy:
-    # exit / no-entry reasons
+    # exit reasons
     EXIT_TP      = "TP"
     EXIT_SL      = "SL"
     EXIT_BE      = "breakeven_stop"
     EXIT_SEGMENT = "segment_close"
-    NO_FILL      = "no_fill"
 
     TRADE_COLUMNS: List[str] = [
         "trade_id", "side", "setup_time", "entry_time", "entry_price",
@@ -103,19 +170,17 @@ class SessionSigmaStrategy:
         run_id:      str = "default_run",
         asset_class: str = "FX",
         timeframe:   str = "",
-        # levels: μ ± kσ marked from level_step to level_max
+        # mean-cross gate: analyze close within ±level_step·σ of μ
         level_step:  float = 0.5,
-        level_max:   float = 3.0,
-        # mean-cross setup
-        tp_ks:       tuple = (1.0, 2.0, 3.0),   # scale-out σ-multiples (3 lots)
-        sl_k:        float = 0.5,               # initial stop, σ against the trade
+        # mean-cross scale-out σ-multiples (3 lots)
+        tp_ks:       tuple = (1.0, 2.0, 3.0),
         breakeven_after_lot: int = 2,           # move SL to entry once this lot TPs
-        # fade setup
-        fade_entry_step: float = 0.5,           # entry = one level further
-        fade_sl_k:       float = 0.5,           # SL beyond the entry level
-        # gating / hygiene
+        # setup switches
         enable_mean_cross: bool = True,
-        enable_fade:       bool = True,
+        enable_breakout:   bool = True,
+        # per-pair overrides merged over PAIR_PARAMS, keyed (analyze, trigger)
+        pair_params: Optional[Dict[Tuple[str, str], Dict]] = None,
+        # gating / hygiene
         min_bars_analyze:  int = 5,
         min_bars_trigger:  int = 3,
     ) -> None:
@@ -123,14 +188,13 @@ class SessionSigmaStrategy:
         self.asset_class = asset_class
         self.timeframe = timeframe
         self.level_step = float(level_step)
-        self.level_max = float(level_max)
         self.tp_ks = tuple(float(k) for k in tp_ks)
-        self.sl_k = float(sl_k)
         self.breakeven_after_lot = int(breakeven_after_lot)
-        self.fade_entry_step = float(fade_entry_step)
-        self.fade_sl_k = float(fade_sl_k)
         self.enable_mean_cross = enable_mean_cross
-        self.enable_fade = enable_fade
+        self.enable_breakout = enable_breakout
+        self.pair_params = {k: dict(v) for k, v in PAIR_PARAMS.items()}
+        for k, v in (pair_params or {}).items():
+            self.pair_params.setdefault(k, {}).update(v)
         self.min_bars_analyze = int(min_bars_analyze)
         self.min_bars_trigger = int(min_bars_trigger)
 
@@ -188,27 +252,30 @@ class SessionSigmaStrategy:
             return
         cA = float(closesA[-1])
         dev = (cA - mu) / sd
+        pp = self.pair_params.get((a_key, b_key), {})
 
         seg_row = {"day": day, "analyze": a_key, "trigger": b_key,
-                   "mu": mu, "sigma": sd, "close_dev": dev, "setup": None}
+                   "mu": mu, "sigma": sd, "close_dev": dev,
+                   "setup": None, "breakouts": 0}
 
-        if abs(dev) < self.level_step:
-            if self.enable_mean_cross:
-                seg_row["setup"] = "mean_cross"
-                self._mean_cross(day, a_key, b_key, b0, b1, mu, sd, dev)
-        else:
-            k = min(np.floor(abs(dev) / self.level_step) * self.level_step,
-                    self.level_max)
-            seg_row["k_level"] = float(k)
-            if self.enable_fade and k < self.level_max:
-                seg_row["setup"] = "fade"
-                self._fade(day, a_key, b_key, b0, b1, mu, sd, dev, float(k))
+        if (self.enable_mean_cross and pp.get("mean_cross", False)
+                and abs(dev) < self.level_step):
+            seg_row["setup"] = "mean_cross"
+            self._mean_cross(day, a_key, b_key, b0, b1, mu, sd, dev,
+                             sl_k=float(pp.get("sl_k", 0.5)))
+
+        if self.enable_breakout and pp:
+            seg_row["breakouts"] = self._breakout(
+                day, a_key, b_key, b0, b1, mu, sd, dev,
+                k=float(pp.get("breakout_k", 2.0)),
+                tp_ks=tuple(pp.get("breakout_tp_ks", (3.0, 3.5, 4.0))),
+                sl_k=float(pp.get("sl_k", 0.5)))
         self.segment_rows.append(seg_row)
 
-    # ── setup 1: mean-cross with 3-lot scale-out ───────────────────────────────
+    # ── setup 1: mean-cross momentum with 3-lot scale-out ─────────────────────
 
-    def _mean_cross(self, day, a_key, b_key, b0, b1, mu, sd, dev) -> None:
-        short = dev > 0                       # closed above μ → look to fade down
+    def _mean_cross(self, day, a_key, b_key, b0, b1, mu, sd, dev, sl_k) -> None:
+        short = dev > 0                       # closed above μ → cross plays down
         sgn = -1.0 if short else 1.0
         # find the first trigger bar whose RUNNING MEAN crosses μ
         csum = 0.0
@@ -223,20 +290,58 @@ class SessionSigmaStrategy:
             return                            # no cross, or no bars left to manage
         entry = float(self._C[entry_i])
         side = "short" if short else "long"
-        sl0 = entry - sgn * self.sl_k * sd    # 0.5σ against the trade
+        sl0 = entry - sgn * sl_k * sd
 
         lots = []
         for n, tp_k in enumerate(self.tp_ks, start=1):
             tp = mu + sgn * tp_k * sd
-            rec = self._new_trade(side, entry_i, entry, sl0, tp,
-                                  setup="mean_cross", lot=n,
-                                  day=day, a_key=a_key, b_key=b_key,
-                                  mu=mu, sd=sd, dev=dev)
-            lots.append(rec)
+            lots.append(self._new_trade(side, entry_i, entry, sl0, tp,
+                                        setup="mean_cross", lot=n,
+                                        day=day, a_key=a_key, b_key=b_key,
+                                        mu=mu, sd=sd, dev=dev))
+        self._manage(lots, short, entry, entry_i + 1, b1)
 
-        # manage bar-by-bar; SL before TP on the same bar; not on the entry bar
+    # ── setup 2: breakout continuation beyond ±kσ ─────────────────────────────
+
+    def _breakout(self, day, a_key, b_key, b0, b1, mu, sd, dev,
+                  k, tp_ks, sl_k) -> int:
+        """First close beyond μ±kσ enters WITH the break, once per direction.
+        Returns the number of breakout entries taken this transition."""
+        done = set()
+        entries = 0
+        for i in range(b0, b1 - 1):           # leave ≥1 bar to manage
+            z = (float(self._C[i]) - mu) / sd
+            if z >= k and "long" not in done:
+                side, sgn = "long", 1.0
+            elif z <= -k and "short" not in done:
+                side, sgn = "short", -1.0
+            else:
+                continue
+            done.add(side)                    # hits cluster: first hit = episode
+            entry = float(self._C[i])
+            # targets the entry already passed carry no information — drop
+            # them; an entry beyond the top target has nothing left to aim at
+            tps = [mu + sgn * t * sd for t in tp_ks if t > abs(z) + 1e-12]
+            if not tps:
+                continue
+            sl0 = entry - sgn * sl_k * sd
+            lots = []
+            for n, tp in enumerate(tps, start=1):
+                lots.append(self._new_trade(side, i, entry, sl0, float(tp),
+                                            setup="breakout", lot=n,
+                                            day=day, a_key=a_key, b_key=b_key,
+                                            mu=mu, sd=sd, dev=dev, k_level=k))
+            self._manage(lots, side == "short", entry, i + 1, b1)
+            entries += 1
+        return entries
+
+    # ── shared lot management ─────────────────────────────────────────────────
+
+    def _manage(self, lots, short, entry, start_i, b1) -> None:
+        """Bar-by-bar exits: SL before TP on the same bar; breakeven for the
+        remaining lots once lot ``breakeven_after_lot`` takes profit."""
         be_armed = False
-        for i in range(entry_i + 1, b1):
+        for i in range(start_i, b1):
             for rec in lots:
                 if rec["exit_time"] is not None:
                     continue
@@ -266,63 +371,6 @@ class SessionSigmaStrategy:
             if rec["exit_time"] is None:
                 self._close(rec, b1 - 1, float(self._C[b1 - 1]), self.EXIT_SEGMENT)
 
-    # ── setup 2: extension fade back to the mean ───────────────────────────────
-
-    def _fade(self, day, a_key, b_key, b0, b1, mu, sd, dev, k) -> None:
-        short = dev > 0                       # extended above → fade short
-        sgn = -1.0 if short else 1.0
-        entry_lvl = mu - sgn * (k + self.fade_entry_step) * sd   # one level further
-        sl = entry_lvl - sgn * self.fade_sl_k * sd               # 0.5σ beyond entry
-        tp = mu                                                  # back to the mean
-
-        fill_i = None
-        for i in range(b0, b1 - 1):           # leave ≥1 bar to manage
-            if (short and self._H[i] >= entry_lvl) or \
-               (not short and self._L[i] <= entry_lvl):
-                fill_i = i
-                break
-        side = "short" if short else "long"
-        if fill_i is None:
-            rec = self._new_trade(side, b0, None, None, None,
-                                  setup="fade", lot=0,
-                                  day=day, a_key=a_key, b_key=b_key,
-                                  mu=mu, sd=sd, dev=dev, k_level=k)
-            rec.update(exit_time=self._time(b1 - 1), exit_bar=b1 - 1,
-                       exit_reason=self.NO_FILL)
-            self.trades.append(rec)
-            return
-
-        lots = []
-        for n in range(1, len(self.tp_ks) + 1):
-            rec = self._new_trade(side, fill_i, float(entry_lvl), float(sl),
-                                  float(tp), setup="fade", lot=n,
-                                  day=day, a_key=a_key, b_key=b_key,
-                                  mu=mu, sd=sd, dev=dev, k_level=k)
-            lots.append(rec)
-
-        for i in range(fill_i + 1, b1):
-            for rec in lots:
-                if rec["exit_time"] is not None:
-                    continue
-                hit = None
-                if short:
-                    if self._H[i] >= rec["sl_price"]:
-                        hit = (rec["sl_price"], self.EXIT_SL)
-                    elif self._L[i] <= rec["tp_price"]:
-                        hit = (rec["tp_price"], self.EXIT_TP)
-                else:
-                    if self._L[i] <= rec["sl_price"]:
-                        hit = (rec["sl_price"], self.EXIT_SL)
-                    elif self._H[i] >= rec["tp_price"]:
-                        hit = (rec["tp_price"], self.EXIT_TP)
-                if hit is not None:
-                    self._close(rec, i, hit[0], hit[1])
-            if all(r["exit_time"] is not None for r in lots):
-                return
-        for rec in lots:
-            if rec["exit_time"] is None:
-                self._close(rec, b1 - 1, float(self._C[b1 - 1]), self.EXIT_SEGMENT)
-
     # ── records ────────────────────────────────────────────────────────────────
 
     def _new_trade(self, side, bar_i, entry, sl, tp, *, setup, lot,
@@ -331,13 +379,13 @@ class SessionSigmaStrategy:
             "trade_id":    self._next_id(),
             "side":        side,
             "setup_time":  self._time(bar_i),
-            "entry_time":  self._time(bar_i) if entry is not None else None,
+            "entry_time":  self._time(bar_i),
             "entry_price": entry,
             "exit_time":   None,
             "exit_price":  None,
             "sl_price":    sl,
             "tp_price":    tp,
-            "risk":        abs(entry - sl) if entry is not None and sl is not None else None,
+            "risk":        abs(entry - sl),
             "exit_reason": None,
             "setup":       setup,
             "lot":         lot,
@@ -345,11 +393,10 @@ class SessionSigmaStrategy:
             "analyze_segment": SEGMENT_LABEL[a_key],
             "trigger_segment": SEGMENT_LABEL[b_key],
             "mu": mu, "sigma": sd, "close_dev": dev, "k_level": k_level,
-            "entry_bar": bar_i if entry is not None else None,
+            "entry_bar": bar_i,
             "exit_bar": None, "bars_held": None,
         }
-        if entry is not None:
-            self.trades.append(rec)
+        self.trades.append(rec)
         return rec
 
     def _close(self, rec: Dict, i: int, price: float, reason: str) -> None:
@@ -396,14 +443,17 @@ class SessionSigmaStrategy:
                 "asset_class": self.asset_class,
                 "timeframe": self.timeframe,
                 "segment_chain": SEGMENT_CHAIN,
-                "level_step": self.level_step, "level_max": self.level_max,
-                "tp_ks": list(self.tp_ks), "sl_k": self.sl_k,
+                "level_step": self.level_step,
+                "tp_ks": list(self.tp_ks),
                 "breakeven_after_lot": self.breakeven_after_lot,
-                "fade_entry_step": self.fade_entry_step,
-                "fade_sl_k": self.fade_sl_k,
                 "enable_mean_cross": self.enable_mean_cross,
-                "enable_fade": self.enable_fade,
+                "enable_breakout": self.enable_breakout,
+                "pair_params": {f"{a}->{b}": {
+                    kk: (list(vv) if isinstance(vv, tuple) else vv)
+                    for kk, vv in p.items()}
+                    for (a, b), p in self.pair_params.items()},
                 "min_bars_analyze": self.min_bars_analyze,
                 "min_bars_trigger": self.min_bars_trigger,
+                "calibration": "XAUUSD 5m band study 2024-06-30…2026-07-16",
             },
         }

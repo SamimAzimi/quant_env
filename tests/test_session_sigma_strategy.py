@@ -1,4 +1,9 @@
-"""SessionSigmaStrategy: segment windows, both setups, ledger, pipeline run."""
+"""SessionSigmaStrategy: segment windows, both setups, ledger, pipeline run.
+
+The strategy is the evidence-based redesign from the band study: breakout
+continuation on every pair, mean-cross momentum only on the calibrated
+pairs, per-pair stops — and no fade-to-the-mean setup anywhere.
+"""
 from datetime import date
 
 import numpy as np
@@ -6,7 +11,7 @@ import pandas as pd
 import pytest
 
 from strategies.session_sigma_strategy import (
-    SEGMENT_CHAIN, SessionSigmaStrategy, segment_windows,
+    PAIR_PARAMS, SEGMENT_CHAIN, SessionSigmaStrategy, segment_windows,
 )
 
 # 2026-07-06 is a Monday; summer windows (UTC): tokyo_solo 00-07,
@@ -25,6 +30,24 @@ def test_segment_windows_partition_summer_day():
     # consecutive segments tile the trading day
     for a, b in zip(SEGMENT_CHAIN[:-1], SEGMENT_CHAIN[1:]):
         assert w[a][1] == w[b][0]
+
+
+def test_pair_params_reflect_band_study():
+    # fade is gone entirely, and the two under-scaled rulers (8% / 35% of
+    # closes beyond ±4σ in the study) never run mean-cross
+    assert not hasattr(SessionSigmaStrategy, "_fade")
+    assert PAIR_PARAMS[("tokyo_london", "london_solo")]["mean_cross"] is False
+    assert PAIR_PARAMS[("london_solo", "london_ny")]["mean_cross"] is False
+    assert PAIR_PARAMS[("tokyo_solo", "tokyo_london")]["mean_cross"] is True
+    assert PAIR_PARAMS[("london_ny", "ny_solo")]["mean_cross"] is True
+    # stops cover the measured adverse excursion per pair (0.26/0.7/1.0/0.37σ)
+    assert PAIR_PARAMS[("tokyo_solo", "tokyo_london")]["sl_k"] >= 0.30
+    assert PAIR_PARAMS[("tokyo_london", "london_solo")]["sl_k"] >= 0.75
+    assert PAIR_PARAMS[("london_solo", "london_ny")]["sl_k"] >= 1.00
+    assert PAIR_PARAMS[("london_ny", "ny_solo")]["sl_k"] >= 0.40
+    # breakout targets sit further out where the tails reach further
+    assert (PAIR_PARAMS[("london_solo", "london_ny")]["breakout_tp_ks"]
+            > PAIR_PARAMS[("tokyo_solo", "tokyo_london")]["breakout_tp_ks"])
 
 
 def _bars(start, closes, spread=0.0002):
@@ -59,7 +82,7 @@ def test_mean_cross_short_scales_out_three_lots():
     df = pd.concat([a, b, _flat_rest_of_day("2026-07-06 09:00", 1.0965)],
                    ignore_index=True)
 
-    strat = SessionSigmaStrategy(enable_fade=False)
+    strat = SessionSigmaStrategy(enable_breakout=False)
     trades_df, details = strat.backtest(df)
     full = details["trades"]
     mc = full[(full["setup"] == "mean_cross")
@@ -78,57 +101,79 @@ def test_mean_cross_short_scales_out_three_lots():
     # after lot 2's TP, lot 3's stop moved to entry (breakeven)
     lot3 = mc[mc["lot"] == 3].iloc[0]
     assert lot3["sl_price"] == pytest.approx(entry)
-    # initial stop was 0.5σ against the trade for lot 1
+    # initial stop was the pair's sl_k (0.5σ) against the trade for lot 1
     lot1 = mc[mc["lot"] == 1].iloc[0]
     assert lot1["sl_price"] == pytest.approx(entry + 0.5 * sd, rel=1e-6)
 
 
-def test_fade_short_fills_and_targets_mean():
-    # analyze: μ=1.1, σ≈1e-3, last close 1.1012 → dev≈+1.19 → k=1.0
-    analyze = ([1.0990, 1.1010] * 14)[:27] + [1.1012]
+def test_mean_cross_never_runs_on_uncalibrated_pair():
+    # london_solo → london_ny: KS 0.293, ~35% of closes beyond ±4σ in the
+    # study — the σ ruler is decorative, so mean-cross must not fire even
+    # when the analyze close sits within ±0.5σ and the trigger crosses μ
+    analyze = [1.0990, 1.1010] * 5 + [1.0990, 1.1002]   # 12 bars, dev≈+0.27
+    a = _bars("2026-07-06 09:00", analyze)
+    b = _bars("2026-07-06 12:00", [1.0990] * 16)        # running mean < μ
+    df = pd.concat([a, b], ignore_index=True)
+    _, details = SessionSigmaStrategy().backtest(df)
+    assert len(details["trades"]) == 0
+
+
+def test_breakout_long_scales_out_three_lots():
+    # analyze (tokyo_solo): μ=1.1, σ≈1.02e-3.  trigger: staircase up through
+    # +2σ (entry with the break) then on through 3σ, 3.5σ, 4σ (the pair's
+    # targets) — continuation, exactly what the band study measured
+    analyze = [1.0990, 1.1010] * 14
     a = _bars("2026-07-06 00:00", analyze)
-    # trigger: pushes up through μ+1.5σ (≈1.10152) then falls to the mean
-    trig = [1.1013, 1.1016, 1.1010, 1.1004, 1.0999, 1.0999, 1.0999, 1.0999]
+    trig = [1.1005, 1.1015, 1.1022, 1.1028, 1.1033, 1.1038, 1.1043, 1.1043]
     b = _bars("2026-07-06 07:00", trig)
-    df = pd.concat([a, b, _flat_rest_of_day("2026-07-06 09:00", 1.0999)],
+    df = pd.concat([a, b, _flat_rest_of_day("2026-07-06 09:00", 1.1043)],
                    ignore_index=True)
 
     strat = SessionSigmaStrategy(enable_mean_cross=False)
     _, details = strat.backtest(df)
     full = details["trades"]
-    fd = full[(full["setup"] == "fade")
-              & (full["analyze_segment"] == "Tokyo (solo)")
-              & (full["lot"] > 0)]
-    assert len(fd) == 3
-    mu, sd = float(fd["mu"].iloc[0]), float(fd["sigma"].iloc[0])
-    entry = float(fd["entry_price"].iloc[0])
-    assert entry == pytest.approx(mu + 1.5 * sd, rel=1e-6)   # one level further
-    assert set(fd["side"]) == {"short"}
-    assert fd["tp_price"].iloc[0] == pytest.approx(mu)       # target = analyze mean
-    assert fd["sl_price"].iloc[0] == pytest.approx(entry + 0.5 * sd, rel=1e-6)
-    assert set(fd["exit_reason"]) == {"TP"}
+    bo = full[(full["setup"] == "breakout")
+              & (full["analyze_segment"] == "Tokyo (solo)")]
+    assert len(bo) == 3
+    assert set(bo["side"]) == {"long"}
+    mu, sd = float(bo["mu"].iloc[0]), float(bo["sigma"].iloc[0])
+    entry = float(bo["entry_price"].iloc[0])
+    assert entry == pytest.approx(1.1022)     # first close beyond μ+2σ
+    assert entry > mu + 2 * sd
+    tps = sorted(bo["tp_price"])
+    assert tps == pytest.approx([mu + 3 * sd, mu + 3.5 * sd, mu + 4 * sd])
+    assert set(bo["exit_reason"]) == {"TP"}   # staircase carried to all three
+    # pair stop: sl_k=0.5σ below entry for lot 1; lot 3 at breakeven after
+    # lot 2's target filled
+    lot1 = bo[bo["lot"] == 1].iloc[0]
+    assert lot1["sl_price"] == pytest.approx(entry - 0.5 * sd, rel=1e-6)
+    lot3 = bo[bo["lot"] == 3].iloc[0]
+    assert lot3["sl_price"] == pytest.approx(entry)
 
 
-def test_fade_no_fill_recorded():
-    analyze = ([1.0990, 1.1010] * 14)[:27] + [1.1012]
+def test_breakout_only_once_per_direction():
+    # first break enters (hits cluster → first hit marks the episode);
+    # a second push through the same level must not open a second position
+    analyze = [1.0990, 1.1010] * 14
     a = _bars("2026-07-06 00:00", analyze)
-    trig = [1.1005] * 8                        # never reaches μ+1.5σ
+    trig = [1.1022, 1.1005, 1.1010, 1.1022, 1.1005, 1.1005, 1.1005, 1.1005]
     b = _bars("2026-07-06 07:00", trig)
     df = pd.concat([a, b, _flat_rest_of_day("2026-07-06 09:00", 1.1005)],
                    ignore_index=True)
     strat = SessionSigmaStrategy(enable_mean_cross=False)
     _, details = strat.backtest(df)
     full = details["trades"]
-    nf = full[(full["setup"] == "fade")
+    bo = full[(full["setup"] == "breakout")
               & (full["analyze_segment"] == "Tokyo (solo)")]
-    assert len(nf) == 1
-    assert nf["exit_reason"].iloc[0] == "no_fill"
-    assert pd.isna(nf["entry_price"].iloc[0])
+    assert len(bo) == 3                       # one entry, three lots
+    assert bo["entry_time"].nunique() == 1
+    assert set(bo["exit_reason"]) == {"SL"}   # the pullback stopped them out
 
 
-def test_extreme_extension_beyond_top_level_is_skipped():
-    # last close ≈ +12σ → k capped at 3.0 → no level above → no fade trade
-    analyze = ([1.0990, 1.1010] * 14)[:27] + [1.1120]
+def test_breakout_beyond_top_target_is_skipped():
+    # entry ≈ +12σ: every pair target already passed → nothing left to aim
+    # at → no trade (and no re-arm later in the segment)
+    analyze = [1.0990, 1.1010] * 14
     a = _bars("2026-07-06 00:00", analyze)
     b = _bars("2026-07-06 07:00", [1.1120] * 8)
     df = pd.concat([a, b, _flat_rest_of_day("2026-07-06 09:00", 1.1120)],
@@ -137,7 +182,7 @@ def test_extreme_extension_beyond_top_level_is_skipped():
     _, details = strat.backtest(df)
     full = details["trades"]
     if len(full):
-        assert not ((full["setup"] == "fade")
+        assert not ((full["setup"] == "breakout")
                     & (full["analyze_segment"] == "Tokyo (solo)")).any()
 
 
@@ -154,10 +199,12 @@ def test_ledger_has_pipeline_columns_and_details():
     full = details["trades"]
     if len(full):
         assert {"sl_price", "tp_price", "setup", "lot", "mu", "sigma"} <= set(full.columns)
-        filled = full[full["entry_price"].notna()]
-        assert filled["exit_price"].notna().all()   # everything closed
+        assert set(full["setup"]) <= {"mean_cross", "breakout"}
+        assert full["entry_price"].notna().all()
+        assert full["exit_price"].notna().all()   # everything closed
     assert "segments" in details and "metadata" in details
     assert details["metadata"]["strategy"] == "SessionSigma"
+    assert "pair_params" in details["metadata"]
 
 
 def test_full_pipeline_run(tmp_path):
