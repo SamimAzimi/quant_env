@@ -99,10 +99,10 @@ class PipelineConfig:
 
     @property
     def csv_path(self) -> str:
-        return f"{self.marketdata_path}{self.asset_class}:{self.asset}/{self.timeframe}.csv"
+        return f"{self.marketdata_path}{self.asset}/{self.timeframe}.csv"
     @property
     def lower_csv_path(self) -> str:
-        return f"{self.marketdata_path}{self.asset_class}:{self.asset}/{self.lower_tf}.csv"
+        return f"{self.marketdata_path}{self.asset}/{self.lower_tf}.csv"
 
     
     @property

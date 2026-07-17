@@ -35,7 +35,7 @@ ASSETS = [
     ("VIX",      "I:VIX",     "^VIX"),
 ]
 
-BINANCE_SYMBOLS = ["BTCUSDT", "ETHUSDT"]      # crypto -> folder == symbol
+BINANCE_SYMBOLS = ["BTCUSDT", "ETHUSDT","XAUTUSDT"]      # crypto -> folder == symbol
 
 INTRADAY_TFS = ["5m", "15m", "30m", "1h", "2h", "4h"]
 
