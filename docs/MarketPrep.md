@@ -111,27 +111,39 @@ too.
   meeting's top rate buckets across recorded snapshots.
 - **Asset Stats** — pick a ticker → timeframe; the available date range is
   shown and used in full unless you narrow it (From/To), then Analyze. The
-  backend (`server/asset_stats.py`) studies every trading day in the range,
-  all session-based around the three majors and their overlaps, with
-  DST-correct windows (`libs/market_sessions.py`):
-  - *Session & overlap return distributions* — histograms (μ and
-    ±0.5/1/1.5/2σ band lines, skew, tail probabilities) for each segment:
-    Tokyo, Tokyo∖London, Tokyo∩London, London, London∖Tokyo, London∖NY,
-    London∩NY, New York, New York∖London, and the full trading day.
-    Segment return = `ln(close/open)`.
-  - *Conditional band transitions* — six reference sub-sessions, each
-    stacked on the page, each setting ±0.5/1/1.5/2σ bands from its own
-    return distribution (anchored at its open). Reference → trigger windows:
-    Tokyo∖London → London∖NY and London∩NY (separately); Tokyo∩London →
-    London-after-Tokyo ∖NY and ∩NY; London∩NY → NY-after-London→close;
-    London∖NY → New York; overlap Tokyo∩London → end-of-overlap→next
-    overlap; overlap London∩NY → same, overnight. For each trigger, up and
-    down: a full **matrix** P(touch *target*σ | close beyond *breakout*σ)
-    across all band pairs (click a cell to select), and **clean move** per
-    adjacent segment (0.5→1, 1→1.5, 1.5→2): path efficiency
-    `|net| / Σ|bar move|`, mean adverse excursion (σ), bars, and count.
-    Everything on a cumulative-log-return axis anchored at the reference
-    open. `/api/asset-stats/range` feeds the date pickers.
+  backend studies every trading day in the range, session-based around the
+  three majors and their overlaps, DST-correct (`libs/market_sessions.py`):
+  - *Session & overlap return distributions* (`server/asset_stats.py`) —
+    histograms (μ and band lines, skew, tail probabilities) for each
+    segment: Tokyo, Tokyo∖London, Tokyo∩London, London, London∖Tokyo,
+    London∖NY, London∩NY, New York, New York∖London, and the full day.
+    Segment return = `ln(close/open)` at the selected timeframe.
+  - *Band-behaviour study* (`server/band_behavior.py`, A–G) — for each
+    consecutive session pair (S_t → S_{t+1}) of the five-part partition:
+    μ_t/σ_t from all S_t candle closes define 0.25σ bands to ±4σ (34 bands
+    incl. open tails); every S_{t+1} close is banded. Per pair, tabbed:
+    **A** band-occupancy distribution vs the normal model; **B** first-touch
+    Kaplan–Meier survival curves per band (never-touch days censored at
+    session end); **C** path geometry (candles to touch, adverse excursion
+    in bands, oscillation share, time inside, depth); **D** 34×34 band
+    transition heatmap + P(toward centre) per band; **E** escape velocity
+    (signed/absolute bands-per-candle on exits, share toward centre);
+    **F** inferential tests with H₀/statistic/p/plain-language reading —
+    Kolmogorov–Smirnov and Anderson–Darling on z vs N(0,1), χ² band
+    occupancy vs the normal expectation, Wald–Wolfowitz runs tests
+    (above/below μ, outer-band hits; Stouffer-combined across days),
+    Mann–Whitney U (inner vs outer first-touch times and escape speeds);
+    **G** a synthesis verdict (structured / mixed / noise-like). The study
+    can be **saved** (`saved_reports` table) for later or **copied as JSON**
+    for another AI prompt; saved studies reload from the page.
+- **Strategies** — browse backtest runs persisted by the pipeline. Runs
+  save into the app database by default (`store_backend="mysql"` on
+  `PipelineConfig`; `"legacy"` keeps the old sqlite/parquet ResultStore).
+  Normalized schema: `bt_runs`, `bt_metrics` (key/value KPIs), `bt_trades`
+  (typed ledger + strategy extras as JSON), `bt_equity`, `bt_frames`
+  (exit reasons, monthly returns, rolling/by-period breakdowns, costed,
+  detail frames). The page shows headline tiles, the equity curve,
+  breakdown frames, every metric, and the paginated trade ledger.
 - **Day & Quant** — day-over-day behaviour plus a hedge-fund-style
   character report (`server/quant_stats.py`), same ticker→timeframe→date-
   range flow:

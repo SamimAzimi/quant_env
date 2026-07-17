@@ -5,6 +5,7 @@ import RecordOverlay from './components/RecordOverlay';
 import AssetStatsPage from './pages/AssetStatsPage';
 import DayStatsPage from './pages/DayStatsPage';
 import HistoryPage from './pages/HistoryPage';
+import StrategyReportsPage from './pages/StrategyReportsPage';
 import MarketPrepPage from './pages/MarketPrepPage';
 
 // New pages: add a <Route> plus a nav link (and one in the mobile menu).
@@ -26,6 +27,7 @@ export default function App() {
           <NavLink to="/history">History</NavLink>
           <NavLink to="/asset-stats">Asset Stats</NavLink>
           <NavLink to="/day-stats">Day &amp; Quant</NavLink>
+          <NavLink to="/strategy-reports">Strategies</NavLink>
         </nav>
         <span className="date" title={`frontend built ${__BUILD_TIME__} UTC`}>
           {new Date().toLocaleDateString('en-GB', {
@@ -44,6 +46,7 @@ export default function App() {
         <Route path="/history" element={<HistoryPage />} />
         <Route path="/asset-stats" element={<AssetStatsPage />} />
         <Route path="/day-stats" element={<DayStatsPage />} />
+        <Route path="/strategy-reports" element={<StrategyReportsPage />} />
         <Route path="*" element={<MarketPrepPage refreshKey={refreshKey} />} />
       </Routes>
 
@@ -56,6 +59,7 @@ export default function App() {
           <NavLink to="/history">History</NavLink>
           <NavLink to="/asset-stats">Asset Stats</NavLink>
           <NavLink to="/day-stats">Day &amp; Quant</NavLink>
+          <NavLink to="/strategy-reports">Strategies</NavLink>
         </div>
       )}
 

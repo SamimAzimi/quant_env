@@ -48,6 +48,25 @@ def _cached(asset: str, tf: str, start: str, end: str, mtime: float) -> dict:
     return asset_stats.analyze(asset, tf, s, e)
 
 
+@lru_cache(maxsize=8)
+def _cached_bands(asset: str, tf: str, start: str, end: str, mtime: float) -> dict:
+    from .. import band_behavior
+    s = date.fromisoformat(start) if start else None
+    e = date.fromisoformat(end) if end else None
+    return band_behavior.analyze_bands(asset, tf, s, e)
+
+
+@router.get("/bands")
+def band_study(asset: str = Query(...), tf: str = Query("15m"),
+               start: str = Query(""), end: str = Query("")):
+    """Band-behaviour study (A–G) for each consecutive session pair."""
+    path = _guard(asset, tf)
+    try:
+        return _cached_bands(asset, tf, start, end, os.path.getmtime(path))
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(404, str(e))
+
+
 @router.get("")
 def asset_statistics(asset: str = Query(...), tf: str = Query("15m"),
                      start: str = Query(""), end: str = Query("")):
