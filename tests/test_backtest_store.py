@@ -90,6 +90,22 @@ def test_report_carries_dashboard_parity_fields(tmp_path):
         assert 0 <= mc["prob_profit"] <= 100
 
 
+def test_long_asset_class_fits(tmp_path):
+    """'Commodities' (11 chars) must fit bt_runs.asset_class — regression
+    for MySQL error 1406 (column was VARCHAR(10))."""
+    from server import models
+    assert models.BtRun.asset_class.type.length >= len("Commodities")
+    assert models.BtRun.timeframe.type.length >= 20
+    _reload_server(tmp_path)
+    from server.backtest_store import BacktestStore
+    store = BacktestStore()
+    store.save_pipeline(run_id="cls", asset="XAUUSD",
+                        extra_metadata={"asset_class": "Commodities",
+                                        "timeframe": "5m"})
+    row = BacktestStore().summary_table()
+    assert row["asset_class"].iloc[0] == "Commodities"
+
+
 def test_saved_reports_roundtrip(tmp_path):
     _reload_server(tmp_path)
     main = importlib.import_module("server.main")

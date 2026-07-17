@@ -83,7 +83,11 @@ class BacktestStore:
 
     def __init__(self, db_file: Optional[str] = None):   # db_file kept for
         del db_file                                       # signature parity
-        Base.metadata.create_all(engine)
+        # full migration, not just create_all: a pipeline run in a plain
+        # terminal must also pick up column widenings/additions without
+        # waiting for a server restart
+        from .migrate import migrate
+        migrate(engine)
 
     # ── save ──────────────────────────────────────────────────────────────────
 
@@ -192,6 +196,9 @@ class BacktestStore:
                 m = {x.name: (x.value if x.value is not None else x.text_value)
                      for x in run.metrics}
                 rows.append({"run_id": run.run_id, "asset": run.asset,
+                             "strategy": run.strategy,
+                             "timeframe": run.timeframe,
+                             "asset_class": run.asset_class,
                              "saved_at": run.saved_at.isoformat(),
                              **{k: m.get(k) for k in HEADLINE_KEYS}})
         return pd.DataFrame(rows)
