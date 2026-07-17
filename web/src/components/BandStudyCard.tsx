@@ -42,9 +42,12 @@ function Histogram({ pair, labels }: { pair: BandPair; labels: string[] }) {
 
 const KEY_BANDS = [
   { idx: 19, label: '+0.5σ' }, { idx: 21, label: '+1σ' }, { idx: 25, label: '+2σ' },
+  { idx: 29, label: '+3σ' }, { idx: 33, label: '+4σ' },
   { idx: 14, label: '−0.5σ' }, { idx: 12, label: '−1σ' }, { idx: 8, label: '−2σ' },
+  { idx: 4, label: '−3σ' }, { idx: 0, label: '−4σ' },
 ];
-const CURVE_COLORS = ['#26a69a', '#4f8ff7', '#ab47bc', '#f0842c', '#ef5350', '#8d6e63'];
+const CURVE_COLORS = ['#26a69a', '#4f8ff7', '#ab47bc', '#f0842c', '#ef5350',
+  '#8d6e63', '#5ec8f0', '#c9c95e', '#e57373', '#81c784'];
 
 function Survival({ pair }: { pair: BandPair }) {
   const rows = pair.B_C!;

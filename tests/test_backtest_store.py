@@ -67,26 +67,27 @@ def test_pipeline_persists_to_app_db_and_api_serves_it(tmp_path):
     assert len(BacktestStore().summary_table()) == 1
 
 
-def test_legacy_resultstore_backend_still_works(tmp_path):
+def test_report_carries_dashboard_parity_fields(tmp_path):
+    """Score/rank, grouped metrics, long-short, Monte Carlo, cost summary."""
     _reload_server(tmp_path)
-    from libs.pipeline import PipelineConfig, run_pipeline
-    from strategies.session_sigma_strategy import SessionSigmaStrategy
-    rng = np.random.default_rng(9)
-    idx = pd.date_range("2026-05-01", periods=20 * 96, freq="15min")
-    c = 1.10 * np.exp(np.cumsum(rng.normal(0, 0.0004, len(idx))))
-    o = np.concatenate([[c[0]], c[:-1]])
-    folder = tmp_path / "FX:LEG"
-    folder.mkdir()
-    pd.DataFrame({"Open time": idx.strftime("%Y-%m-%d %H:%M:%S"), "open": o,
-                  "high": np.maximum(o, c) * 1.0002,
-                  "low": np.minimum(o, c) * 0.9998, "close": c}) \
-        .to_csv(folder / "15m.csv", index=False)
-    res = run_pipeline(PipelineConfig(
-        asset="LEG", asset_class="FX", timeframe="15m", cost_symbol="EURUSD",
-        strategy_cls=SessionSigmaStrategy, store_backend="legacy",
-        marketdata_path=str(tmp_path) + "/", db_path=str(tmp_path) + "/"))
-    assert "net_profit" in res.metrics
-    assert (tmp_path / "all_backtests.db").exists()   # old sqlite store
+    _run_backtest(tmp_path)
+    main = importlib.import_module("server.main")
+    with TestClient(main.app) as c:
+        runs = c.get("/api/strategy-reports").json()
+        assert runs[0]["rank"] == 1 and runs[0]["composite_score"] is not None
+        rep = c.get("/api/strategy-reports/storetest").json()
+        assert rep["rank"] == 1 and rep["n_runs"] == 1
+        gnames = [g["name"] for g in rep["metric_groups"]]
+        assert "Performance" in gnames and "Risk & return" in gnames
+        perf = next(g for g in rep["metric_groups"] if g["name"] == "Performance")
+        assert any(i["key"] == "net_profit" for i in perf["items"])
+        assert {r["side"] for r in rep["long_short"]} <= {"long", "short"}
+        assert rep["cost_summary"]["trades"] > 0
+        assert rep["cost_summary"]["total_cost"] is not None
+        mc = rep["monte_carlo"]
+        assert mc and mc["n_paths"] == 1000
+        assert len(mc["hist"]["counts"]) == 30
+        assert 0 <= mc["prob_profit"] <= 100
 
 
 def test_saved_reports_roundtrip(tmp_path):

@@ -37,12 +37,18 @@ TRADING_DAYS = 252
 
 
 def _finite(x):
-    """Recursively replace NaN/Inf with None so the payload is valid JSON."""
+    """Recursively make the payload valid JSON: NaN/Inf → None and numpy
+    scalars → native python (market_metrics returns plenty of both)."""
     if isinstance(x, dict):
-        return {k: _finite(v) for k, v in x.items()}
+        return {str(k): _finite(v) for k, v in x.items()}
     if isinstance(x, (list, tuple)):
         return [_finite(v) for v in x]
-    if isinstance(x, float):
+    if isinstance(x, np.bool_):
+        return bool(x)
+    if isinstance(x, np.integer):
+        return int(x)
+    if isinstance(x, (float, np.floating)):
+        x = float(x)
         return x if math.isfinite(x) else None
     return x
 
@@ -230,54 +236,24 @@ def _performance(ret: np.ndarray) -> dict:
 # --------------------------------------------------------------------------
 
 def _character(df: pd.DataFrame, name: str) -> dict:
+    """The FULL libs/market_stats.market_metrics dict (every block —
+    distribution, volatility, mean-reversion, sessions, calendar,
+    probability) plus the libs/desk_card cards. Nothing curated away."""
     try:
-        from libs.market_stats import MarketStats
+        from libs.desk_card import desk_card
+        from libs.market_stats import analyze as ms_analyze
     except Exception as e:                       # scipy/sklearn missing
         return {"note": f"quant character unavailable ({e})"}
     try:
         idx = pd.DatetimeIndex(df["Datetime"])
         ohlc = df[["Open", "High", "Low", "Close"]].copy()
         ohlc.index = idx
-        ms = MarketStats(ohlc, tz="UTC", name=name)
-        dist = ms.distribution()
-        vol = ms.volatility()
-        mr = ms.mean_reversion()
-        prob = ms.probability()
-        return {
-            "distribution": {
-                "skewness": dist.get("skewness"),
-                "excess_kurtosis": dist.get("excess_kurtosis"),
-                "jarque_bera_p": dist.get("jarque_bera_p"),
-                "is_normal_5pct": dist.get("is_normal_5pct"),
-                "hill_tail_index": dist.get("hill_tail_index"),
-                "student_t_dof": dist.get("student_t_dof"),
-                "quantiles": dist.get("empirical_quantiles"),
-            },
-            "volatility": {
-                "annualised": vol.get("annualised"),
-                "atr_14": vol.get("atr_14"),
-                "vol_of_vol": vol.get("vol_of_vol"),
-                "clustering_present": vol.get("clustering_test", {}).get("clustering_present_5pct"),
-                "garch_persistence": (vol.get("garch") or {}).get("persistence"),
-                "leverage_effect": (vol.get("gjr_garch") or {}).get("leverage_effect"),
-                "cones": vol.get("volatility_cones"),
-            },
-            "mean_reversion": {
-                "hurst_rs": mr.get("hurst_rs"),
-                "dfa_exponent": mr.get("dfa_exponent"),
-                "variance_ratio_q2": mr.get("variance_ratio", {}).get("q2"),
-                "adf_stationary_5pct": mr.get("adf", {}).get("stationary_5pct"),
-                "half_life_bars": mr.get("half_life_bars"),
-                "verdict": mr.get("verdict"),
-            },
-            "predictability": {
-                "conditional_direction": prob.get("conditional_direction"),
-                "markov_transition": prob.get("markov_transition"),
-                "touch_empirical": prob.get("touch_probability", {}).get("empirical"),
-                "expected_move": prob.get("expected_move_bands"),
-                "mfe_mae": prob.get("mfe_mae"),
-            },
-        }
+        ms = ms_analyze(ohlc, tz="UTC", name=name)
+        metrics = ms.to_dict()                   # = market_metrics(...)
+        cards = desk_card(metrics, print_out=False)
+        return {"market_metrics": metrics,
+                "character_report": ms.report(),
+                "desk_card": cards}
     except Exception as e:                       # pragma: no cover
         return {"note": f"quant character failed ({e})"}
 

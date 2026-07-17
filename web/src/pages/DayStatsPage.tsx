@@ -34,6 +34,53 @@ function KV({ rows }: { rows: [string, string][] }) {
   );
 }
 
+function fmtVal(v: unknown): string {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'number') {
+    if (Number.isInteger(v)) return v.toLocaleString('en-US');
+    if (v !== 0 && Math.abs(v) < 1e-4) return v.toExponential(2);
+    return String(Number(v.toFixed(4)));
+  }
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
+  return String(v);
+}
+
+/** Generic renderer for the nested market_metrics blocks — every scalar as
+ * a key/value row, every sub-dict behind a collapsible summary, so nothing
+ * from libs/market_stats is left out of the page. */
+function Tree({ data }: { data: Record<string, unknown> }) {
+  const entries = Object.entries(data ?? {});
+  const leaves = entries.filter(([, v]) => v === null || typeof v !== 'object');
+  const nests = entries.filter(([, v]) => v !== null && typeof v === 'object');
+  return (
+    <div>
+      {leaves.length > 0 && (
+        <table className="data"><tbody>
+          {leaves.map(([k, v]) => (
+            <tr key={k}><th className="muted">{k.replace(/_/g, ' ')}</th><td>{fmtVal(v)}</td></tr>
+          ))}
+        </tbody></table>
+      )}
+      {nests.map(([k, v]) => (
+        <details key={k} style={{ marginTop: 6 }}>
+          <summary className="small" style={{ cursor: 'pointer', fontWeight: 600 }}>
+            {k.replace(/_/g, ' ')}
+          </summary>
+          {Array.isArray(v)
+            ? <pre className="small" style={{ overflowX: 'auto' }}>{JSON.stringify(v, null, 1)}</pre>
+            : <Tree data={v as Record<string, unknown>} />}
+        </details>
+      ))}
+    </div>
+  );
+}
+
+const CARD_PRE: React.CSSProperties = {
+  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+  fontSize: 11, lineHeight: 1.45, overflowX: 'auto',
+  whiteSpace: 'pre', margin: 0,
+};
+
 export default function DayStatsPage() {
   const [meta, setMeta] = useState<StatsMeta>({ available: [], default_charts: [], timeframes: ['15m'] });
   const [asset, setAsset] = useState('');
@@ -187,50 +234,60 @@ export default function DayStatsPage() {
 
           {ch && !ch.note && (
             <>
-              <h2 className="section-head">Quant character</h2>
-              <div className="stats-grid">
-                <div className="card">
-                  <h2>Distribution shape</h2>
-                  <KV rows={[
-                    ['Skewness', num(ch.distribution?.skewness)],
-                    ['Excess kurtosis', num(ch.distribution?.excess_kurtosis)],
-                    ['Normal (JB 5%)', ch.distribution?.is_normal_5pct ? 'yes' : 'no'],
-                    ['Hill tail index', num(ch.distribution?.hill_tail_index, 1)],
-                    ['Student-t dof', num(ch.distribution?.student_t_dof, 1)],
-                  ]} />
-                </div>
-                <div className="card">
-                  <h2>Volatility</h2>
-                  <KV rows={[
-                    ['Yang–Zhang (ann.)', pc(ch.volatility?.annualised?.yang_zhang, 1)],
-                    ['Close-to-close (ann.)', pc(ch.volatility?.annualised?.close_to_close, 1)],
-                    ['Vol clustering', ch.volatility?.clustering_present ? 'yes (ARCH)' : 'no'],
-                    ['GARCH persistence', num(ch.volatility?.garch_persistence, 3)],
-                    ['Leverage effect', ch.volatility?.leverage_effect ? 'yes' : 'no'],
-                  ]} />
-                </div>
-                <div className="card">
-                  <h2>Mean reversion / trend</h2>
-                  <KV rows={[
-                    ['Verdict', String(ch.mean_reversion?.verdict ?? '—')],
-                    ['Hurst (R/S)', num(ch.mean_reversion?.hurst_rs)],
-                    ['DFA exponent', num(ch.mean_reversion?.dfa_exponent)],
-                    ['Variance ratio q2', num(ch.mean_reversion?.variance_ratio_q2?.vr)],
-                    ['ADF stationary', ch.mean_reversion?.adf_stationary_5pct ? 'yes' : 'no'],
-                    ['OU half-life (bars)', num(ch.mean_reversion?.half_life_bars, 1)],
-                  ]} />
-                </div>
-                <div className="card">
-                  <h2>Predictability</h2>
-                  <KV rows={[
-                    ['P(up)', pc(ch.predictability?.conditional_direction?.['P(up)'], 0)],
-                    ['P(up | up)', pc(ch.predictability?.conditional_direction?.['P(up_next | up_today)'], 0)],
-                    ['P(up | down)', pc(ch.predictability?.conditional_direction?.['P(up_next | down_today)'], 0)],
-                    ['Touch 1σ (empirical)', pc(ch.predictability?.touch_empirical?.['1sigma'], 0)],
-                    ['Touch 2σ (empirical)', pc(ch.predictability?.touch_empirical?.['2sigma'], 0)],
-                  ]} />
-                </div>
-              </div>
+              {ch.desk_card && (
+                <>
+                  <h2 className="section-head">Desk card (libs/desk_card)</h2>
+                  <div className="stats-grid">
+                    {ch.desk_card.distribution?.text && (
+                      <div className="card span-2">
+                        <h2>Distribution card</h2>
+                        <pre style={CARD_PRE}>{ch.desk_card.distribution.text}</pre>
+                        <details style={{ marginTop: 6 }}>
+                          <summary className="small muted" style={{ cursor: 'pointer' }}>raw numbers</summary>
+                          <Tree data={Object.fromEntries(Object.entries(
+                            ch.desk_card.distribution).filter(([k]) => k !== 'text'))} />
+                        </details>
+                      </div>
+                    )}
+                    {ch.desk_card.volatility?.text && (
+                      <div className="card span-2">
+                        <h2>Volatility card</h2>
+                        <pre style={CARD_PRE}>{ch.desk_card.volatility.text}</pre>
+                        <details style={{ marginTop: 6 }}>
+                          <summary className="small muted" style={{ cursor: 'pointer' }}>raw numbers</summary>
+                          <Tree data={Object.fromEntries(Object.entries(
+                            ch.desk_card.volatility).filter(([k]) => k !== 'text'))} />
+                        </details>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {ch.character_report && (
+                <>
+                  <h2 className="section-head">Character report (libs/market_stats)</h2>
+                  <div className="card">
+                    <pre style={CARD_PRE}>{ch.character_report}</pre>
+                  </div>
+                </>
+              )}
+
+              {ch.market_metrics && (
+                <>
+                  <h2 className="section-head">Market metrics — full market_metrics()</h2>
+                  <div className="stats-grid">
+                    {Object.entries(ch.market_metrics).map(([block, data]) => (
+                      <div className="card" key={block}>
+                        <h2>{block.replace(/_/g, ' ')}</h2>
+                        {data && typeof data === 'object'
+                          ? <Tree data={data as Record<string, unknown>} />
+                          : <p className="muted small">{String(data)}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </>
           )}
           {ch?.note && <p className="muted small">{ch.note}</p>}

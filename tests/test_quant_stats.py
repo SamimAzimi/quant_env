@@ -38,7 +38,7 @@ def test_daily_distribution_and_continuation():
     assert dd["n"] > 100 and dd["std"] > 0
     ic = r["intraday_continuation"]
     assert ic["n_days"] > 100
-    assert len(ic["up"]["matrix"]) == 4
+    assert len(ic["up"]["matrix"]) == 8
 
 
 def test_day_to_day_four_buckets():
@@ -76,9 +76,16 @@ def test_character_present_when_scipy_available():
     r = _analyze(_synthetic())
     ch = r["character"]
     if "note" not in ch:
-        assert "distribution" in ch and "volatility" in ch
-        assert "hurst_rs" in ch["mean_reversion"]
-        assert ch["mean_reversion"]["verdict"] is not None
+        # the FULL market_metrics dict, the text report, and the desk cards
+        mm = ch["market_metrics"]
+        for block in ("meta", "distribution", "volatility", "mean_reversion",
+                      "sessions", "calendar", "probability", "regimes"):
+            assert block in mm
+        assert "hurst_rs" in mm["mean_reversion"]
+        assert mm["mean_reversion"]["verdict"] is not None
+        assert "DISTRIBUTION CARD" in ch["desk_card"]["distribution"]["text"]
+        assert "VOLATILITY CARD" in ch["desk_card"]["volatility"]["text"]
+        assert isinstance(ch["character_report"], str) and ch["character_report"]
 
 
 def test_payload_is_strict_json_no_nan():

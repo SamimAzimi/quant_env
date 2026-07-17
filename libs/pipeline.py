@@ -2,8 +2,9 @@
 pipeline.py — one parameterized entry point for the whole backtest chain.
 
 Wires: data_loader → strategy backtest → CFDAccountSimulator (costs applied
-internally) → PerformanceAnalytics → ResultStore, for one (asset, timeframe),
-and batches cleanly over many.
+internally) → PerformanceAnalytics → BacktestStore (the Market-Prep app
+database, browsable in the web app under Strategies), for one
+(asset, timeframe), and batches cleanly over many.
 
 The strategy is injected, so the engine stays independent of any specific
 strategy module:
@@ -48,7 +49,6 @@ from libs import indicators as ind
 from libs.cfd_cost import CFDCostModel
 from libs.account import CFDAccountSimulator
 from libs.performance import PerformanceAnalytics
-from libs.result_store import ResultStore
 
 
 def _default_strategy_cls():
@@ -92,10 +92,6 @@ class PipelineConfig:
     db_path: str = str(DB_DIR) + "/"
     persist: bool = True
     overwrite: bool = True
-    # "mysql" saves into the Market-Prep app database (MARKET_PREP_DB_URL,
-    # browsable in the web app under Strategy Reports); "legacy" keeps the
-    # original sqlite/parquet ResultStore under db_path.
-    store_backend: str = "mysql"
 
     def __post_init__(self) -> None:
         self.run_id = self.run_id or f"{self.asset}_{self.timeframe}"
@@ -152,11 +148,16 @@ class PipelineResult:
 
 
 def _make_store(cfg: "PipelineConfig"):
-    """Store for this run: the MySQL app database by default, or the legacy
-    sqlite/parquet ResultStore when cfg.store_backend == 'legacy'."""
-    if cfg.store_backend == "legacy":
-        return ResultStore(cfg.db_file)
-    from server.backtest_store import BacktestStore   # lazy: server deps
+    """Store for this run: the Market-Prep app database (MARKET_PREP_DB_URL),
+    where the web app's Strategies page reads it back."""
+    try:
+        from server.backtest_store import BacktestStore   # lazy: server deps
+    except ImportError as exc:
+        raise RuntimeError(
+            "Persisting a run needs the web-app dependencies so it can be "
+            "saved into the Market-Prep database and shown under Strategies: "
+            "pip install -e '.[web]'"
+        ) from exc
     return BacktestStore(cfg.db_file)
 
 
@@ -172,7 +173,7 @@ def _cost_summary(result_df: pd.DataFrame) -> Dict[str, Any]:
 # Single run
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_pipeline(cfg: PipelineConfig, store: Optional[ResultStore] = None) -> PipelineResult:
+def run_pipeline(cfg: PipelineConfig, store: Optional[Any] = None) -> PipelineResult:
     """Run the full chain for one (asset, timeframe) and (optionally) persist it."""
     # 1. data + indicators
 
@@ -219,6 +220,10 @@ def run_pipeline(cfg: PipelineConfig, store: Optional[ResultStore] = None) -> Pi
             extra_metadata=cfg.metadata(),
             overwrite=cfg.overwrite,
         )
+        # say WHERE it went, so "the report doesn't show" is diagnosable
+        from server.db import DB_URL
+        print(f"[store] run {cfg.run_id!r} saved to {DB_URL} "
+              "— web app → Strategies")
 
     return PipelineResult(
         run_id=cfg.run_id, asset=cfg.asset,
@@ -234,7 +239,7 @@ def run_pipeline(cfg: PipelineConfig, store: Optional[ResultStore] = None) -> Pi
 
 def run_many(
     configs: List[PipelineConfig],
-    store: Optional[ResultStore] = None,
+    store: Optional[Any] = None,
     *,
     raise_on_error: bool = False,
 ) -> Dict[str, PipelineResult]:
@@ -265,5 +270,5 @@ if __name__ == "__main__":
     print("net profit  :", res.metrics["net_profit"], "| sharpe:", res.metrics["sharpe"])
 
     # cross-run comparison after a batch
-    store = ResultStore(PipelineConfig(asset="NDX", asset_class="I").db_file)
-    print(store.summary_table().to_string(index=False))
+    from server.backtest_store import BacktestStore
+    print(BacktestStore().summary_table().to_string(index=False))

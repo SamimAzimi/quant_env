@@ -34,14 +34,15 @@ def _analyze(df, **kw):
 
 def test_bands_and_segments():
     r = _analyze(_synthetic())
-    assert r["bands"] == [0.5, 1.0, 1.5, 2.0]
+    assert r["bands"] == [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
     # all overlap/session segments present
     for label in ["Tokyo", "Tokyo ∩ London", "London ∩ NY",
                   "New York ∖ London (after London)", "Full trading day"]:
         assert label in r["sessions"]
         s = r["sessions"][label]
         assert s["n"] > 0 and s["std"] > 0
-        assert set(s["probs"]["up"]) == {"0.5", "1.0", "1.5", "2.0"}
+        assert set(s["probs"]["up"]) == {"0.5", "1.0", "1.5", "2.0",
+                                        "2.5", "3.0", "3.5", "4.0"}
 
 
 def test_six_references_with_expected_triggers():
@@ -62,9 +63,9 @@ def test_matrix_is_valid_conditional_probability():
         for trig in ref["triggers"]:
             for side in (trig["up"], trig["down"]):
                 m = side["matrix"]
-                assert len(m) == 4 and all(len(row) == 4 for row in m)
-                for i in range(4):
-                    for j in range(4):
+                assert len(m) == 8 and all(len(row) == 8 for row in m)
+                for i in range(8):
+                    for j in range(8):
                         v = m[i][j]
                         if v is not None:
                             assert 0 <= v <= 1

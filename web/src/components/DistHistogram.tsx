@@ -1,11 +1,12 @@
 import type { DistStats } from '../api';
 
 const pct = (x: number) => `${(x * 100).toFixed(2)}%`;
-const KS = [0.5, 1, 1.5, 2];
+const KS = [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4];
 
 /**
  * SVG histogram of a segment's log-return distribution with the mean and
- * ±0.5/1/1.5/2σ band lines overlaid. Returns are on a % axis.
+ * ±0.5σ…±4σ band lines overlaid. Returns are on a % axis. Lines outside
+ * the histogram range are simply not drawn.
  */
 export default function DistHistogram({ dist, title }: { dist: DistStats; title: string }) {
   if (dist.note || !dist.hist || dist.mean === undefined || dist.std === undefined) {
@@ -44,8 +45,8 @@ export default function DistHistogram({ dist, title }: { dist: DistStats; title:
         })}
         {KS.map((k) => (
           <g key={k}>
-            {line(mu + k * sd, '#26a69a', k !== 2)}
-            {line(mu - k * sd, '#ef5350', k !== 2)}
+            {line(mu + k * sd, '#26a69a', k % 2 !== 0)}
+            {line(mu - k * sd, '#ef5350', k % 2 !== 0)}
           </g>
         ))}
         {line(mu, '#e6e9ef', false)}

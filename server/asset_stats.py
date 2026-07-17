@@ -42,7 +42,7 @@ import pandas as pd
 
 from .marketdata import _session_utc, load_bars
 
-BANDS = [0.5, 1.0, 1.5, 2.0]
+BANDS = [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]
 ADJ = [(0.5, 1.0), (1.0, 1.5), (1.5, 2.0)]
 
 # Distribution segments: key -> display label.
