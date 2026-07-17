@@ -106,6 +106,27 @@ def test_long_asset_class_fits(tmp_path):
     assert row["asset_class"].iloc[0] == "Commodities"
 
 
+def test_delete_run_and_delete_all_leave_nothing_behind(tmp_path):
+    _reload_server(tmp_path)
+    _run_backtest(tmp_path, run_id="one")
+    _run_backtest(tmp_path, run_id="two")
+    from server import models
+    from server.db import SessionLocal
+    main = importlib.import_module("server.main")
+    with TestClient(main.app) as c:
+        assert len(c.get("/api/strategy-reports").json()) == 2
+        # single delete: run + every dependent row of that run
+        assert c.delete("/api/strategy-reports/one").status_code == 204
+        assert [r["run_id"] for r in c.get("/api/strategy-reports").json()] == ["two"]
+        # delete all: bt_* tables must be completely empty afterwards
+        assert c.delete("/api/strategy-reports").status_code == 204
+        assert c.get("/api/strategy-reports").json() == []
+    with SessionLocal() as db:
+        for model in (models.BtRun, models.BtMetric, models.BtTrade,
+                      models.BtEquityPoint, models.BtFrame):
+            assert db.query(model).count() == 0, model.__tablename__
+
+
 def test_big_json_columns_are_longtext_on_mysql():
     """Report frames / band studies / trade extras exceed MySQL TEXT's 64 KB
     — regression for error 1406 on bt_frames.payload (~200 KB frame)."""
