@@ -20,9 +20,15 @@ from sqlalchemy import (
     Column, Date, DateTime, Enum, Float, ForeignKey, Integer,
     String, Table, Text, UniqueConstraint,
 )
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import relationship
 
 from .db import Base
+
+# Machine-generated JSON blobs (report frames, band studies, trade extras)
+# routinely exceed MySQL TEXT's 64 KB — store them as LONGTEXT there.
+# SQLite has no length classes, so plain TEXT elsewhere.
+BigJSON = Text().with_variant(LONGTEXT(), "mysql")
 
 
 def utcnow() -> datetime:
@@ -187,8 +193,8 @@ class SavedReport(Base):
     id = Column(Integer, primary_key=True)
     kind = Column(String(40), nullable=False)            # e.g. "band_study"
     title = Column(String(200), nullable=False)
-    params_json = Column(Text, nullable=False, default="{}")
-    payload = Column(Text, nullable=False)               # JSON blob
+    params_json = Column(BigJSON, nullable=False, default="{}")
+    payload = Column(BigJSON, nullable=False)            # JSON blob
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
 
@@ -203,7 +209,7 @@ class BtRun(Base):
     asset_class = Column(String(40), nullable=False, default="")
     saved_at = Column(DateTime, nullable=False, default=utcnow)
     n_trades = Column(Integer, nullable=False, default=0)
-    metadata_json = Column(Text, nullable=False, default="{}")
+    metadata_json = Column(BigJSON, nullable=False, default="{}")
 
     metrics = relationship("BtMetric", back_populates="run",
                            cascade="all, delete-orphan", lazy="selectin")
@@ -255,7 +261,7 @@ class BtTrade(Base):
     net_pnl = Column(Float, nullable=True)
     r_multiple = Column(Float, nullable=True)
     equity_after = Column(Float, nullable=True)
-    extra_json = Column(Text, nullable=False, default="{}")
+    extra_json = Column(BigJSON, nullable=False, default="{}")
 
     run = relationship("BtRun", back_populates="trades")
 
@@ -280,7 +286,7 @@ class BtFrame(Base):
     id = Column(Integer, primary_key=True)
     run_pk = Column(ForeignKey("bt_runs.id", ondelete="CASCADE"), nullable=False)
     name = Column(String(80), nullable=False)
-    payload = Column(Text, nullable=False)
+    payload = Column(BigJSON, nullable=False)
 
     run = relationship("BtRun", back_populates="frames")
 

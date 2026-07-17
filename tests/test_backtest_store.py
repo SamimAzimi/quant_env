@@ -106,6 +106,20 @@ def test_long_asset_class_fits(tmp_path):
     assert row["asset_class"].iloc[0] == "Commodities"
 
 
+def test_big_json_columns_are_longtext_on_mysql():
+    """Report frames / band studies / trade extras exceed MySQL TEXT's 64 KB
+    — regression for error 1406 on bt_frames.payload (~200 KB frame)."""
+    from sqlalchemy.dialects import mysql
+    from server import models
+    d = mysql.dialect()
+    for col in (models.BtFrame.__table__.c.payload,
+                models.BtTrade.__table__.c.extra_json,
+                models.BtRun.__table__.c.metadata_json,
+                models.SavedReport.__table__.c.payload,
+                models.SavedReport.__table__.c.params_json):
+        assert col.type.compile(d).upper() == "LONGTEXT", col
+
+
 def test_saved_reports_roundtrip(tmp_path):
     _reload_server(tmp_path)
     main = importlib.import_module("server.main")
