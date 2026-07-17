@@ -42,7 +42,12 @@ export default function MultiLineChart({ series, height = 260, suffix = '' }: Pr
           ? { type: 'custom', formatter: (v: number) => `${v.toFixed(1)}${suffix}` }
           : { type: 'price', precision: 2, minMove: 0.01 },
       });
-      line.setData(s.points as never);
+      // lightweight-charts throws on unsorted/duplicate times, which would
+      // blank the chart — sort + dedupe (keep last per time) defensively
+      const seen = new Map<number, { time: number; value: number }>();
+      for (const p of s.points) seen.set(p.time, p);
+      const pts = [...seen.values()].sort((a, b) => a.time - b.time);
+      line.setData(pts as never);
     });
     chart.timeScale().fitContent();
     return () => chart.remove();

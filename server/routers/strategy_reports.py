@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from config.dashboard_meta import METRIC_GROUPS, METRIC_META, SCORE_TERMS
 from ..backtest_store import HEADLINE_KEYS
 from ..db import get_db
-from ..models import BtEquityPoint, BtFrame, BtRun, BtTrade
+from ..models import BtEquityPoint, BtFrame, BtMetric, BtRun, BtTrade
 
 router = APIRouter(prefix="/api/strategy-reports", tags=["strategy-reports"])
 
@@ -226,7 +226,18 @@ def run_trades(run_id: str, limit: int = Query(100, le=1000), offset: int = 0,
     return {"total": total, "offset": offset, "rows": rows}
 
 
+@router.delete("", status_code=204)
+def delete_all_runs(db: Session = Depends(get_db)):
+    """Wipe every stored run and all its dependent rows (metrics, trades,
+    equity points, frames) — children first, so nothing is left behind."""
+    for model in (BtMetric, BtTrade, BtEquityPoint, BtFrame):
+        db.query(model).delete(synchronize_session=False)
+    db.query(BtRun).delete(synchronize_session=False)
+    db.commit()
+
+
 @router.delete("/{run_id}", status_code=204)
 def delete_run(run_id: str, db: Session = Depends(get_db)):
+    """Delete one run; ORM cascades remove its metrics/trades/equity/frames."""
     db.delete(_get_run(db, run_id))
     db.commit()

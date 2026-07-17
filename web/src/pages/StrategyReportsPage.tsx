@@ -198,11 +198,32 @@ export default function StrategyReportsPage() {
   const [error, setError] = useState('');
   const PAGE = 50;
 
-  useEffect(() => {
+  const loadRuns = () => {
     api.get<RunSummary[]>('/api/strategy-reports')
-      .then((r) => { setRuns(r); if (r.length && !sel) setSel(r[0].run_id); })
+      .then((r) => {
+        setRuns(r);
+        if (r.length === 0) { setSel(''); setReport(null); setTrades(null); }
+        else if (!sel || !r.some((x) => x.run_id === sel)) setSel(r[0].run_id);
+      })
       .catch((e) => setError(String(e)));
-  }, []);
+  };
+  useEffect(loadRuns, []);
+
+  const deleteRun = async (id: string) => {
+    if (!window.confirm(`Delete stored run "${id}"? Its metrics, trades, equity and frames are all removed.`)) return;
+    try {
+      await api.delete(`/api/strategy-reports/${encodeURIComponent(id)}`);
+      loadRuns();
+    } catch (e) { setError(String(e)); }
+  };
+
+  const deleteAll = async () => {
+    if (!window.confirm(`Delete ALL ${runs.length} stored runs? Every metric, trade, equity point and frame is removed from the database.`)) return;
+    try {
+      await api.delete('/api/strategy-reports');
+      loadRuns();
+    } catch (e) { setError(String(e)); }
+  };
 
   useEffect(() => {
     if (!sel) return;
@@ -221,17 +242,32 @@ export default function StrategyReportsPage() {
   const m = report?.metrics ?? {};
   const frames = report?.frames ?? {};
 
-  const equitySeries = report && report.equity.length > 1
-    ? report.equity.filter((p) => p.time).map((p) => ({
-        time: Math.floor(new Date(`${p.time}Z`).getTime() / 1000),
-        value: p.equity,
-      }))
-    : [];
+  // lightweight-charts needs strictly ascending, UNIQUE times. Multi-lot
+  // exits close on the same bar, so many equity points share a timestamp —
+  // keep the LAST equity value per timestamp (the bar's final state).
+  const timed = new Map<number, number>();
+  for (const p of report?.equity ?? []) {
+    if (!p.time) continue;
+    const t = Math.floor(new Date(`${p.time}Z`).getTime() / 1000);
+    if (Number.isFinite(t)) timed.set(t, p.equity);
+  }
+  const equitySeries = [...timed.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([time, value]) => ({ time, value }));
   // drawdown % from the stored equity (running-max, like the old dashboard)
   let peak = -Infinity;
   const ddSeries = equitySeries.map((p) => {
     peak = Math.max(peak, p.value);
     return { time: p.time, value: peak > 0 ? ((p.value / peak) - 1) * 100 : 0 };
+  });
+  // fallback when timestamps are missing: plot per trade step instead
+  const equityRows = (report?.equity ?? []).map((p, i) => ({
+    label: String(p.step ?? i), value: p.equity,
+  }));
+  let peak2 = -Infinity;
+  const ddRows = equityRows.map((p) => {
+    peak2 = Math.max(peak2, p.value);
+    return { label: p.label, value: peak2 > 0 ? ((p.value / peak2) - 1) * 100 : 0 };
   });
 
   const exitRows = frameRows(frames.exit_reasons);
@@ -259,12 +295,57 @@ export default function StrategyReportsPage() {
         <p className="muted">
           No stored runs yet. Backtests persist here automatically:
           <code> run_pipeline(PipelineConfig(...))</code> saves into the app
-          database (store_backend="mysql", the default). The pipeline prints
-          the exact database it saved to — it must match the
-          <code> MARKET_PREP_DB_URL</code> this server uses.
+          database. The pipeline prints the exact database it saved to — it
+          must match the <code>MARKET_PREP_DB_URL</code> this server uses.
         </p>
       )}
       {error && <p className="error">{error}</p>}
+
+      {runs.length > 0 && (
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <h2>Stored runs ({runs.length})</h2>
+            <button className="ghost small" onClick={deleteAll}>🗑 Delete all</button>
+          </div>
+          <p className="muted small">
+            Every strategy run saved in the database. Click a row to open its
+            report; Delete removes the run and all of its metrics, trades,
+            equity points and frames.
+          </p>
+          <div style={{ overflowX: 'auto', maxHeight: 280, overflowY: 'auto' }}>
+            <table className="data">
+              <thead><tr>
+                <th>rank</th><th>run</th><th>strategy</th><th>asset</th>
+                <th>tf</th><th>trades</th><th>net profit</th><th>score</th>
+                <th>saved (UTC)</th><th />
+              </tr></thead>
+              <tbody>
+                {runs.map((r) => (
+                  <tr key={r.run_id} onClick={() => setSel(r.run_id)}
+                    style={{ cursor: 'pointer' }}
+                    className={r.run_id === sel ? 'row-open' : ''}>
+                    <td>{r.rank ? `#${r.rank}` : '—'}</td>
+                    <td>{r.run_id}</td>
+                    <td>{r.strategy || '—'}</td>
+                    <td>{r.asset}</td>
+                    <td>{r.timeframe || '—'}</td>
+                    <td>{r.n_trades}</td>
+                    <td>{num(r.headline?.net_profit as number | null)}</td>
+                    <td>{num(r.composite_score)}</td>
+                    <td className="small">{r.saved_at.slice(0, 16).replace('T', ' ')}</td>
+                    <td>
+                      <button className="ghost small"
+                        onClick={(e) => { e.stopPropagation(); deleteRun(r.run_id); }}>
+                        Delete
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {report && (
         <>
@@ -283,15 +364,19 @@ export default function StrategyReportsPage() {
             ))}
           </div>
 
-          {equitySeries.length > 1 && (
+          {(equitySeries.length > 1 || equityRows.length > 1) && (
             <div className="stats-grid" style={{ marginTop: 14 }}>
               <div className="card">
                 <h2>Equity curve</h2>
-                <MultiLineChart series={[{ name: 'equity', points: equitySeries }]} />
+                {equitySeries.length > 1
+                  ? <MultiLineChart series={[{ name: 'equity', points: equitySeries }]} />
+                  : <MiniLine rows={equityRows} />}
               </div>
               <div className="card">
                 <h2>Drawdown (%)</h2>
-                <MultiLineChart series={[{ name: 'drawdown', points: ddSeries }]} suffix="%" />
+                {ddSeries.length > 1
+                  ? <MultiLineChart series={[{ name: 'drawdown', points: ddSeries }]} suffix="%" />
+                  : <MiniLine rows={ddRows} format={(v) => `${v.toFixed(2)}%`} />}
               </div>
             </div>
           )}
