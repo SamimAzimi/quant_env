@@ -50,6 +50,7 @@ def migrate(engine: Engine) -> None:
                 conn.execute(text(ddl))
                 added.add((table.name, column.name))
 
+        _widen_varchars(engine, conn, inspector)
         _backfill_news(conn, inspector, added)
 
         for table_name, column_name in RETIRED_COLUMNS:
@@ -63,6 +64,31 @@ def migrate(engine: Engine) -> None:
             except Exception:   # very old SQLite: neutralize instead
                 logger.warning("DROP COLUMN failed; leaving %s.%s in place",
                                table_name, column_name)
+
+
+def _widen_varchars(engine: Engine, conn, inspector) -> None:
+    """Enlarge VARCHAR columns the models have grown since the table was
+    created — in place with MODIFY, so existing rows are untouched (e.g.
+    bt_runs.asset_class 10 → 40 for 'Commodities'). MySQL only: SQLite does
+    not enforce VARCHAR lengths, so there is nothing to widen there.
+    """
+    if engine.dialect.name != "mysql":
+        return
+    for table in Base.metadata.sorted_tables:
+        db_cols = {c["name"]: c for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            dbc = db_cols.get(column.name)
+            if dbc is None:
+                continue
+            model_len = getattr(column.type, "length", None)
+            db_len = getattr(dbc["type"], "length", None)
+            if not model_len or not db_len or db_len >= model_len:
+                continue
+            null_sql = "" if column.nullable else " NOT NULL"
+            ddl = (f"ALTER TABLE {table.name} MODIFY COLUMN {column.name} "
+                   f"VARCHAR({model_len}){null_sql}")
+            logger.info("Migrating: %s", ddl)
+            conn.execute(text(ddl))
 
 
 def _backfill_news(conn, inspector, added: set[tuple[str, str]]) -> None:
