@@ -66,11 +66,17 @@ def migrate(engine: Engine) -> None:
                                table_name, column_name)
 
 
+# TEXT-family capacity order — used to decide whether a MODIFY grows a column
+_TEXT_RANK = {"TINYTEXT": 0, "TEXT": 1, "MEDIUMTEXT": 2, "LONGTEXT": 3}
+
+
 def _widen_varchars(engine: Engine, conn, inspector) -> None:
-    """Enlarge VARCHAR columns the models have grown since the table was
-    created — in place with MODIFY, so existing rows are untouched (e.g.
-    bt_runs.asset_class 10 → 40 for 'Commodities'). MySQL only: SQLite does
-    not enforce VARCHAR lengths, so there is nothing to widen there.
+    """Enlarge columns the models have grown since the table was created —
+    in place with MODIFY, so existing rows are untouched. Covers VARCHAR
+    length increases (e.g. bt_runs.asset_class 10 → 40) and TEXT-family
+    upgrades (e.g. bt_frames.payload TEXT 64 KB → LONGTEXT for the big JSON
+    report frames). MySQL only: SQLite enforces neither, so there is
+    nothing to widen there. Only ever grows a column, never shrinks.
     """
     if engine.dialect.name != "mysql":
         return
@@ -80,13 +86,22 @@ def _widen_varchars(engine: Engine, conn, inspector) -> None:
             dbc = db_cols.get(column.name)
             if dbc is None:
                 continue
+            new_type = None
             model_len = getattr(column.type, "length", None)
             db_len = getattr(dbc["type"], "length", None)
-            if not model_len or not db_len or db_len >= model_len:
+            if model_len and db_len and db_len < model_len:
+                new_type = f"VARCHAR({model_len})"
+            else:
+                model_txt = column.type.compile(engine.dialect).upper()
+                db_txt = str(dbc["type"]).upper()
+                if (model_txt in _TEXT_RANK and db_txt in _TEXT_RANK
+                        and _TEXT_RANK[db_txt] < _TEXT_RANK[model_txt]):
+                    new_type = model_txt
+            if new_type is None:
                 continue
             null_sql = "" if column.nullable else " NOT NULL"
             ddl = (f"ALTER TABLE {table.name} MODIFY COLUMN {column.name} "
-                   f"VARCHAR({model_len}){null_sql}")
+                   f"{new_type}{null_sql}")
             logger.info("Migrating: %s", ddl)
             conn.execute(text(ddl))
 
