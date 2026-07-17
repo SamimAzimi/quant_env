@@ -180,6 +180,111 @@ class Alert(Base):
     created_at = Column(DateTime, nullable=False, default=utcnow)
 
 
+class SavedReport(Base):
+    """A saved analysis payload (e.g. a band-behaviour study) kept for later
+    review or for feeding to another AI prompt."""
+    __tablename__ = "saved_reports"
+    id = Column(Integer, primary_key=True)
+    kind = Column(String(40), nullable=False)            # e.g. "band_study"
+    title = Column(String(200), nullable=False)
+    params_json = Column(Text, nullable=False, default="{}")
+    payload = Column(Text, nullable=False)               # JSON blob
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+
+class BtRun(Base):
+    """One persisted backtest run (pipeline execution)."""
+    __tablename__ = "bt_runs"
+    id = Column(Integer, primary_key=True)
+    run_id = Column(String(120), unique=True, nullable=False)
+    asset = Column(String(40), nullable=False)
+    strategy = Column(String(80), nullable=False, default="")
+    timeframe = Column(String(10), nullable=False, default="")
+    asset_class = Column(String(10), nullable=False, default="")
+    saved_at = Column(DateTime, nullable=False, default=utcnow)
+    n_trades = Column(Integer, nullable=False, default=0)
+    metadata_json = Column(Text, nullable=False, default="{}")
+
+    metrics = relationship("BtMetric", back_populates="run",
+                           cascade="all, delete-orphan", lazy="selectin")
+    trades = relationship("BtTrade", back_populates="run",
+                          cascade="all, delete-orphan")
+    equity = relationship("BtEquityPoint", back_populates="run",
+                          cascade="all, delete-orphan")
+    frames = relationship("BtFrame", back_populates="run",
+                          cascade="all, delete-orphan")
+
+
+class BtMetric(Base):
+    """One scalar KPI of a run (normalized key/value; text fallback)."""
+    __tablename__ = "bt_metrics"
+    __table_args__ = (UniqueConstraint("run_pk", "name", name="uq_bt_metric"),)
+    id = Column(Integer, primary_key=True)
+    run_pk = Column(ForeignKey("bt_runs.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(80), nullable=False)
+    value = Column(Float, nullable=True)
+    text_value = Column(String(120), nullable=True)
+
+    run = relationship("BtRun", back_populates="metrics")
+
+
+class BtTrade(Base):
+    """One ledger row (per lot) with account outcomes; strategy-specific
+    fields (setup, lot, mu, sigma, segments, ...) live in extra_json."""
+    __tablename__ = "bt_trades"
+    id = Column(Integer, primary_key=True)
+    run_pk = Column(ForeignKey("bt_runs.id", ondelete="CASCADE"), nullable=False)
+    trade_id = Column(String(20), nullable=False)
+    side = Column(String(10), nullable=True)
+    setup_time = Column(DateTime, nullable=True)
+    entry_time = Column(DateTime, nullable=True)
+    exit_time = Column(DateTime, nullable=True)
+    entry_price = Column(Float, nullable=True)
+    exit_price = Column(Float, nullable=True)
+    sl_price = Column(Float, nullable=True)
+    tp_price = Column(Float, nullable=True)
+    exit_reason = Column(String(40), nullable=True)
+    lots = Column(Float, nullable=True)
+    units = Column(Float, nullable=True)
+    notional = Column(Float, nullable=True)
+    spread_cost = Column(Float, nullable=True)
+    commission_cost = Column(Float, nullable=True)
+    financing_cost = Column(Float, nullable=True)
+    total_cost = Column(Float, nullable=True)
+    gross_pnl = Column(Float, nullable=True)
+    net_pnl = Column(Float, nullable=True)
+    r_multiple = Column(Float, nullable=True)
+    equity_after = Column(Float, nullable=True)
+    extra_json = Column(Text, nullable=False, default="{}")
+
+    run = relationship("BtRun", back_populates="trades")
+
+
+class BtEquityPoint(Base):
+    __tablename__ = "bt_equity"
+    id = Column(Integer, primary_key=True)
+    run_pk = Column(ForeignKey("bt_runs.id", ondelete="CASCADE"), nullable=False)
+    step = Column(Integer, nullable=False)
+    time = Column(DateTime, nullable=True)
+    trade_id = Column(String(20), nullable=True)
+    equity = Column(Float, nullable=False)
+
+    run = relationship("BtRun", back_populates="equity")
+
+
+class BtFrame(Base):
+    """A report/detail frame (exit_reasons, monthly_returns, rolling series,
+    by-period breakdowns, costed, strategy detail frames) as JSON payload."""
+    __tablename__ = "bt_frames"
+    __table_args__ = (UniqueConstraint("run_pk", "name", name="uq_bt_frame"),)
+    id = Column(Integer, primary_key=True)
+    run_pk = Column(ForeignKey("bt_runs.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(80), nullable=False)
+    payload = Column(Text, nullable=False)
+
+    run = relationship("BtRun", back_populates="frames")
+
+
 class RateSnapshot(Base):
     """One recorded FedWatch-style probability table."""
     __tablename__ = "rate_snapshots"

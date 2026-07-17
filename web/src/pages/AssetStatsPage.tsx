@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
-  api, withParams, type AssetRange, type AssetStatsReport,
+  api, withParams, type AssetRange, type AssetStatsReport, type BandStudy,
+  type SavedReportMeta,
 } from '../api';
+import BandStudyCard from '../components/BandStudyCard';
 import DistHistogram from '../components/DistHistogram';
-import TriggerCard from '../components/TriggerCard';
 
 interface StatsMeta {
   available: string[];
@@ -11,8 +12,8 @@ interface StatsMeta {
   timeframes: string[];
 }
 
-/** Statistics of an asset: session/overlap distributions and conditional
- *  band-transition behaviour over a chosen date range. */
+/** Statistics of an asset: session/overlap distributions plus the
+ *  band-behaviour study for each consecutive session pair. */
 export default function AssetStatsPage() {
   const [meta, setMeta] = useState<StatsMeta>({
     available: [], default_charts: [], timeframes: ['15m'],
@@ -23,20 +24,27 @@ export default function AssetStatsPage() {
   const [end, setEnd] = useState('');
   const [range, setRange] = useState<AssetRange | null>(null);
   const [report, setReport] = useState<AssetStatsReport | null>(null);
+  const [bands, setBands] = useState<BandStudy | null>(null);
+  const [saved, setSaved] = useState<SavedReportMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [msg, setMsg] = useState('');
 
   useEffect(() => {
     api.get<StatsMeta>('/api/stats/assets').then((m) => {
       setMeta(m);
       setAsset(m.available[0] ?? m.default_charts[0] ?? '');
     }).catch(() => {});
+    loadSaved();
   }, []);
 
-  // when asset/timeframe change, fetch the available range and default to full
+  const loadSaved = () =>
+    api.get<SavedReportMeta[]>('/api/saved-reports?kind=band_study')
+      .then(setSaved).catch(() => {});
+
   useEffect(() => {
     if (!asset) return;
-    setRange(null); setReport(null); setError('');
+    setRange(null); setReport(null); setBands(null); setError('');
     api.get<AssetRange>(withParams('/api/asset-stats/range', { asset, tf }))
       .then((r) => { setRange(r); setStart(r.start); setEnd(r.end); })
       .catch((e) => setError(String(e)));
@@ -44,15 +52,42 @@ export default function AssetStatsPage() {
 
   const run = () => {
     if (!asset) return;
-    // omit start/end when they equal the full range (analyze full history)
     const full = range && start === range.start && end === range.end;
-    setLoading(true); setError(''); setReport(null);
-    api.get<AssetStatsReport>(withParams('/api/asset-stats', {
-      asset, tf, start: full ? '' : start, end: full ? '' : end,
-    }))
-      .then(setReport)
+    const p = { asset, tf, start: full ? '' : start, end: full ? '' : end };
+    setLoading(true); setError(''); setReport(null); setBands(null); setMsg('');
+    Promise.all([
+      api.get<AssetStatsReport>(withParams('/api/asset-stats', p)),
+      api.get<BandStudy>(withParams('/api/asset-stats/bands', p)),
+    ])
+      .then(([r, b]) => { setReport(r); setBands(b); })
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));
+  };
+
+  const saveStudy = async () => {
+    if (!bands) return;
+    const title = `${bands.asset} ${bands.timeframe} band study ` +
+      `${bands.date_range[0]}→${bands.date_range[1]}`;
+    await api.post('/api/saved-reports', {
+      kind: 'band_study', title,
+      params: { asset, tf, start, end },
+      payload: bands,
+    });
+    setMsg('Saved ✓');
+    loadSaved();
+  };
+
+  const copyStudy = async () => {
+    if (!bands) return;
+    await navigator.clipboard.writeText(JSON.stringify(bands));
+    setMsg('Copied JSON to clipboard — paste into any AI prompt');
+  };
+
+  const loadStudy = async (id: number) => {
+    const r = await api.get<{ payload: BandStudy }>(`/api/saved-reports/${id}`);
+    setBands(r.payload);
+    setReport(null);
+    setMsg('Loaded saved study');
   };
 
   const assetChoices = meta.available.length > 0 ? meta.available : meta.default_charts;
@@ -88,60 +123,60 @@ export default function AssetStatsPage() {
         </button>
       </div>
 
-      {range && !report && !loading && (
+      {range && !report && !bands && !loading && (
         <p className="muted small">
           {asset} · {tf} — data available {range.start} → {range.end}
-          ({range.n_days} days). The full range is used unless you narrow it.
-          Press Analyze.
+          ({range.n_days} days). Full range used unless narrowed. Press Analyze.
+        </p>
+      )}
+      {saved.length > 0 && (
+        <p className="small muted">
+          Saved studies:{' '}
+          {saved.map((s) => (
+            <button key={s.id} className="ghost small" onClick={() => loadStudy(s.id)}>
+              {s.title}
+            </button>
+          ))}
         </p>
       )}
       {error && <p className="error">{error}</p>}
+      {msg && <p className="small">{msg}</p>}
 
       {report && (
         <>
-          <p className="small muted">
-            {report.asset} · {report.timeframe} · {report.n_days} days ·
-            {report.date_range[0]} → {report.date_range[1]}. Bands: ±0.5/1/1.5/2σ.
-          </p>
-
-          <h2 className="section-head">Session &amp; overlap return distributions</h2>
+          <h2 className="section-head">Session &amp; overlap return distributions
+            <span className="muted"> — {report.timeframe} closes</span>
+          </h2>
           <div className="charts-grid">
             {Object.entries(report.sessions).map(([name, dist]) => (
               <DistHistogram key={name} dist={dist} title={name} />
             ))}
           </div>
+        </>
+      )}
 
-          <h2 className="section-head">
-            Conditional band transitions — every reference stacked
-          </h2>
+      {bands && (
+        <>
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 18 }}>
+            <h2 className="section-head" style={{ margin: 0 }}>
+              Band behaviour — {bands.asset} · {bands.timeframe} ·
+              0.25σ bands to ±4σ · {bands.date_range[0]} → {bands.date_range[1]}
+            </h2>
+            <span className="row">
+              <button className="ghost small" onClick={saveStudy}>💾 Save report</button>
+              <button className="ghost small" onClick={copyStudy}>⧉ Copy for AI prompt</button>
+            </span>
+          </div>
           <p className="small muted">
-            Each reference session sets ±0.5/1/1.5/2σ bands from its own return
-            distribution (anchored at its open). The matrix is
-            P(touch <i>target</i>σ | trigger closes beyond <i>breakout</i>σ) —
-            click a cell to select. Clean move is per adjacent segment:
-            efficiency <code>|net|/Σ|bar move|</code>, mean adverse excursion
-            (σ), bars, and sample count.
+            For each pair: where the next session's {bands.timeframe} closes land
+            in the previous session's bands, how fast each band is first touched
+            (survival curves), the path's shape, the band→band transition matrix,
+            escape velocity, and whether it all beats noise.
           </p>
           <div className="ref-stack">
-            {report.references.map((ref) => (
-              <div key={ref.key} className="card">
-                <div className="row" style={{ justifyContent: 'space-between' }}>
-                  <h2>{ref.label}</h2>
-                  {ref.reference_dist.mean !== undefined && (
-                    <span className="muted small">
-                      ref μ {(ref.reference_dist.mean * 100).toFixed(2)}% ·
-                      σ {((ref.reference_dist.std ?? 0) * 100).toFixed(2)}% ·
-                      n={ref.reference_dist.n}
-                    </span>
-                  )}
-                </div>
-                {ref.triggers.length === 0 && (
-                  <p className="muted small">Not enough reference data for bands.</p>
-                )}
-                {ref.triggers.map((trig) => (
-                  <TriggerCard key={trig.key} trig={trig} />
-                ))}
-              </div>
+            {bands.pairs.map((p) => (
+              <BandStudyCard key={`${p.analyze}-${p.trigger}`} pair={p}
+                labels={bands.band_labels} />
             ))}
           </div>
         </>

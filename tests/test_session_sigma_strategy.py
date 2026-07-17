@@ -161,6 +161,12 @@ def test_ledger_has_pipeline_columns_and_details():
 
 
 def test_full_pipeline_run(tmp_path):
+    # the default store backend persists into the app DB → point it at sqlite
+    import os
+    import sys
+    os.environ["MARKET_PREP_DB_URL"] = f"sqlite:///{tmp_path}/app.db"
+    for mod in [m for m in list(sys.modules) if m.startswith("server")]:
+        del sys.modules[mod]
     from libs.pipeline import PipelineConfig, run_pipeline
     rng = np.random.default_rng(11)
     idx = pd.date_range("2026-05-01", periods=45 * 96, freq="15min")

@@ -92,6 +92,10 @@ class PipelineConfig:
     db_path: str = str(DB_DIR) + "/"
     persist: bool = True
     overwrite: bool = True
+    # "mysql" saves into the Market-Prep app database (MARKET_PREP_DB_URL,
+    # browsable in the web app under Strategy Reports); "legacy" keeps the
+    # original sqlite/parquet ResultStore under db_path.
+    store_backend: str = "mysql"
 
     def __post_init__(self) -> None:
         self.run_id = self.run_id or f"{self.asset}_{self.timeframe}"
@@ -147,6 +151,15 @@ class PipelineResult:
         return self.report["metrics"]
 
 
+def _make_store(cfg: "PipelineConfig"):
+    """Store for this run: the MySQL app database by default, or the legacy
+    sqlite/parquet ResultStore when cfg.store_backend == 'legacy'."""
+    if cfg.store_backend == "legacy":
+        return ResultStore(cfg.db_file)
+    from server.backtest_store import BacktestStore   # lazy: server deps
+    return BacktestStore(cfg.db_file)
+
+
 def _cost_summary(result_df: pd.DataFrame) -> Dict[str, Any]:
     """Aggregate the cost columns already present in result_df — no recompute."""
     f = result_df[result_df["net_pnl"].notna()]
@@ -195,7 +208,7 @@ def run_pipeline(cfg: PipelineConfig, store: Optional[ResultStore] = None) -> Pi
 
     # 5. persist (reuse `report`, don't call perf.report() again)
     if cfg.persist:
-        store = store or ResultStore(cfg.db_file)
+        store = store or _make_store(cfg)
         store.save_pipeline(
             run_id=cfg.run_id,
             asset=cfg.asset,
@@ -230,7 +243,7 @@ def run_many(
     logged and skipped unless `raise_on_error`. Returns {run_id: PipelineResult}.
     """
     if store is None and configs:
-        store = ResultStore(configs[0].db_file)
+        store = _make_store(configs[0])
 
     results: Dict[str, PipelineResult] = {}
     for cfg in configs:

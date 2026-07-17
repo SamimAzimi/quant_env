@@ -19,8 +19,8 @@ from fastapi.staticfiles import StaticFiles
 from .db import SessionLocal, engine
 from .migrate import migrate
 from .routers import (
-    alerts, asset_stats, meta, news, quant_stats, rate_probs, records, stats,
-    trades,
+    alerts, asset_stats, meta, news, quant_stats, rate_probs, records,
+    saved_reports, stats, strategy_reports, trades,
 )
 from .scheduler import alerts_enabled, build_scheduler
 from .seed import seed
@@ -55,6 +55,8 @@ app.add_middleware(
 app.include_router(alerts.router)
 app.include_router(asset_stats.router)
 app.include_router(quant_stats.router)
+app.include_router(strategy_reports.router)
+app.include_router(saved_reports.router)
 app.include_router(meta.router)
 app.include_router(news.router)
 app.include_router(trades.router)

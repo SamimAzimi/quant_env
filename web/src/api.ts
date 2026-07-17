@@ -146,6 +146,68 @@ export interface AssetStatsReport {
 }
 export interface AssetRange { start: string; end: string; n_days: number }
 
+// --- band-behaviour study ---
+export interface BandTest {
+  name: string; null: string; statistic: number | null;
+  p_value: number | null; crit_5pct?: number; reject_5pct?: boolean;
+  interpretation: string;
+}
+export interface BandRow {
+  band: number; touch_rate: number | null; median_touch: number | null;
+  survival: number[]; n_touch: number;
+  candles_to_touch_mean: number | null; adverse_bands_mean: number | null;
+  oscillation_mean: number | null; candles_inside_mean: number | null;
+  depth_mean: number | null;
+}
+export interface EscapeRow {
+  band: number; n_exits: number; mean_signed_bands: number | null;
+  mean_abs_bands: number | null; toward_center_share: number | null;
+}
+export interface BandPair {
+  analyze: string; trigger: string; note?: string;
+  n_days?: number; n_candles?: number;
+  A?: { counts: number[]; probs: number[]; expected_probs: number[] };
+  B_C?: BandRow[];
+  D?: { matrix: number[][]; toward_center: (number | null)[] };
+  E?: EscapeRow[];
+  F?: BandTest[];
+  G?: { bullets: string[]; verdict: string; n_tests: number; n_rejections: number };
+}
+export interface BandStudy {
+  asset: string; timeframe: string; date_range: [string, string];
+  band_step: number; band_max: number; band_labels: string[];
+  pairs: BandPair[];
+}
+export interface SavedReportMeta {
+  id: number; kind: string; title: string; params: Record<string, unknown>;
+  created_at: string;
+}
+
+// --- strategy reports ---
+export interface RunSummary {
+  run_id: string; asset: string; strategy: string; timeframe: string;
+  asset_class: string; saved_at: string; n_trades: number;
+  headline: Record<string, number | string | null>;
+}
+export interface RunReport {
+  run_id: string; asset: string; strategy: string; timeframe: string;
+  asset_class: string; saved_at: string; n_trades: number;
+  metadata: Record<string, unknown>;
+  metrics: Record<string, number | string | null>;
+  equity: { step: number; time: string | null; equity: number }[];
+  frames: Record<string, { columns: string[]; data: unknown[][] }>;
+}
+export interface RunTrades {
+  total: number; offset: number;
+  rows: {
+    trade_id: string; side: string | null; entry_time: string | null;
+    exit_time: string | null; entry_price: number | null;
+    exit_price: number | null; exit_reason: string | null;
+    net_pnl: number | null; r_multiple: number | null;
+    equity_after: number | null; extra: Record<string, unknown>;
+  }[];
+}
+
 // --- day-over-day + quant character ---
 export interface DayToDayState {
   key: string; label: string; n: number;
