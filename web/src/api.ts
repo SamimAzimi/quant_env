@@ -187,15 +187,36 @@ export interface SavedReportMeta {
 export interface RunSummary {
   run_id: string; asset: string; strategy: string; timeframe: string;
   asset_class: string; saved_at: string; n_trades: number;
+  composite_score: number | null; rank: number | null;
   headline: Record<string, number | string | null>;
+}
+export interface MetricGroup {
+  name: string;
+  items: { key: string; label: string; kind: string; value: number | string | null }[];
+}
+export interface LongShortRow {
+  side: string; trades: number; wins: number; win_rate_pct: number;
+  net_pnl: number; avg_pnl: number;
+}
+export interface MonteCarlo {
+  n_paths: number; n_trades: number;
+  median_return: number; p10_return: number; p90_return: number;
+  prob_profit: number; median_maxdd: number; p90_maxdd: number;
+  worst_maxdd: number;
+  hist: { edges: number[]; counts: number[] };
 }
 export interface RunReport {
   run_id: string; asset: string; strategy: string; timeframe: string;
   asset_class: string; saved_at: string; n_trades: number;
   metadata: Record<string, unknown>;
   metrics: Record<string, number | string | null>;
+  metric_groups: MetricGroup[];
+  composite_score: number | null; rank: number | null; n_runs: number;
   equity: { step: number; time: string | null; equity: number }[];
   frames: Record<string, { columns: string[]; data: unknown[][] }>;
+  long_short: LongShortRow[];
+  monte_carlo: MonteCarlo | null;
+  cost_summary: Record<string, number | null>;
 }
 export interface RunTrades {
   total: number; offset: number;

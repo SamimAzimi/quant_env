@@ -13,6 +13,12 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
+# Load the project .env before reading the environment so every process —
+# uvicorn, a pipeline backtest in a plain terminal, a notebook — resolves
+# the SAME database. Real environment variables still win (.env never
+# overrides an already-set value).
+from config import secrets as _secrets  # noqa: F401  (import = load .env)
+
 DB_URL = os.environ.get(
     "MARKET_PREP_DB_URL",
     "mysql+pymysql://root:new_password@localhost:3306/market_prep",

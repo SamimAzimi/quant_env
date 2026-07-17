@@ -1,7 +1,7 @@
-"""MySQL-backed backtest store — the app-database twin of libs/result_store.
+"""MySQL-backed backtest store — every pipeline run, in the app database.
 
-Persists everything ResultStore.save_pipeline saves, normalized into the
-Market-Prep database (MARKET_PREP_DB_URL):
+Persists the full pipeline output (it replaced the retired sqlite/parquet
+ResultStore), normalized into the Market-Prep database (MARKET_PREP_DB_URL):
 
     bt_runs      one row per run (identity + metadata JSON)
     bt_metrics   scalar KPIs, key/value (numeric + text fallback)
@@ -11,8 +11,9 @@ Market-Prep database (MARKET_PREP_DB_URL):
                  by_*), the costed table, and strategy detail frames — each
                  stored as a pandas-split JSON payload
 
-Interface-compatible with ResultStore where the pipeline touches it:
-``save_pipeline(...)`` and ``summary_table()``.
+The pipeline talks to it through ``save_pipeline(...)``; the Strategies
+page of the web app reads it back; ``summary_table()`` gives a cross-run
+comparison frame.
 """
 from __future__ import annotations
 

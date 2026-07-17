@@ -114,8 +114,8 @@ too.
   backend studies every trading day in the range, session-based around the
   three majors and their overlaps, DST-correct (`libs/market_sessions.py`):
   - *Session & overlap return distributions* (`server/asset_stats.py`) —
-    histograms (μ and band lines, skew, tail probabilities) for each
-    segment: Tokyo, Tokyo∖London, Tokyo∩London, London, London∖Tokyo,
+    histograms (μ and ±0.5σ…±4σ band lines in 0.5σ steps, skew, tail
+    probabilities) for each segment: Tokyo, Tokyo∖London, Tokyo∩London, London, London∖Tokyo,
     London∖NY, London∩NY, New York, New York∖London, and the full day.
     Segment return = `ln(close/open)` at the selected timeframe.
   - *Band-behaviour study* (`server/band_behavior.py`, A–G) — for each
@@ -136,14 +136,23 @@ too.
     **G** a synthesis verdict (structured / mixed / noise-like). The study
     can be **saved** (`saved_reports` table) for later or **copied as JSON**
     for another AI prompt; saved studies reload from the page.
-- **Strategies** — browse backtest runs persisted by the pipeline. Runs
-  save into the app database by default (`store_backend="mysql"` on
-  `PipelineConfig`; `"legacy"` keeps the old sqlite/parquet ResultStore).
-  Normalized schema: `bt_runs`, `bt_metrics` (key/value KPIs), `bt_trades`
-  (typed ledger + strategy extras as JSON), `bt_equity`, `bt_frames`
-  (exit reasons, monthly returns, rolling/by-period breakdowns, costed,
-  detail frames). The page shows headline tiles, the equity curve,
-  breakdown frames, every metric, and the paginated trade ledger.
+- **Strategies** — browse backtest runs persisted by the pipeline. Every
+  `run_pipeline(...)` saves into the app database (the legacy
+  sqlite/parquet ResultStore and its Streamlit dashboard are removed; the
+  pipeline prints the exact database URL each run was saved to, which must
+  match this server's `MARKET_PREP_DB_URL` — both sides load the project
+  `.env`, so they agree by default). Normalized schema: `bt_runs`,
+  `bt_metrics` (key/value KPIs), `bt_trades` (typed ledger + strategy
+  extras as JSON), `bt_equity`, `bt_frames` (exit reasons, monthly
+  returns, rolling/by-period breakdowns, costed, detail frames). The page
+  carries full old-dashboard parity: composite score + rank across runs,
+  the headline KPI strip, equity + drawdown charts, exit-reason / monthly
+  / rolling-Sharpe / rolling-win-rate / by-session / by-day / by-hour
+  charts, long-vs-short split, a Monte Carlo bootstrap of trade returns
+  (percentiles, prob. of profit, max-DD distribution, histogram), the
+  cost summary, every metric in the grouped panels from
+  `config/dashboard_meta.py`, run metadata, and the paginated trade
+  ledger.
 - **Day & Quant** — day-over-day behaviour plus a hedge-fund-style
   character report (`server/quant_stats.py`), same ticker→timeframe→date-
   range flow:
@@ -156,14 +165,17 @@ too.
   - *Day-to-day transition* (given the previous day's σ-bucket → next
     day), *overnight gap* analysis (size, fill probability, continuation),
     and *streak* statistics.
-  - *Quant character* from `libs/market_stats.py`: distribution shape
-    (skew, excess kurtosis, Jarque–Bera normality, Hill tail index,
-    Student-t dof), volatility (Yang–Zhang & others, GARCH persistence,
-    ARCH clustering, leverage effect), mean-reversion/trend (Hurst, DFA,
-    variance ratio, ADF, OU half-life, verdict), and predictability
-    (Markov, conditional direction, empirical touch probabilities). This
-    section needs scipy/scikit-learn (core deps); it degrades gracefully
-    with a note if they are missing.
+  - *Desk card* (`libs/desk_card.py`) — the distribution and volatility
+    desk cards (directional bias, vol-target sizing, VaR/ES, Kelly and
+    tail-capped leverage, option-hedge estimate, overnight-gap split, vol
+    regime + cones, GARCH glide path, ATR unit sizing), rendered as the
+    monospace cards plus a collapsible raw-numbers view.
+  - *Character report + full market metrics* (`libs/market_stats.py`) —
+    the text `report()` and the complete `market_metrics()` dict (meta,
+    distribution, desk, volatility, mean-reversion, sessions, calendar,
+    probability, regimes), rendered block by block with every nested
+    section expandable — nothing curated away. Needs scipy/scikit-learn
+    (core deps); degrades gracefully with a note if they are missing.
 - **Record** — the round **+** button (bottom-right, every page) opens an
   overlay with tabs: News (title, details, role — primary / supporting /
   contradicting / duplicate / update —, source with inline add, publish
