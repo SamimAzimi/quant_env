@@ -1,7 +1,7 @@
 """Trade journal: record trades (with asset + prices), day view, history."""
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
@@ -9,19 +9,14 @@ from sqlalchemy.orm import Session
 
 from ..dates import as_of_or_today, day_bounds, range_bounds, today_utc
 from ..db import get_db
+from ..utils import naive_utc
 from ..models import Trade
 from ..schemas import TradeIn, TradeOut, TradePatch
 
 router = APIRouter(prefix="/api/trades", tags=["trades"])
 
 
-def _naive_utc(dt: datetime | None) -> datetime | None:
-    """Store naive UTC; tz-aware inputs are converted, naive assumed UTC."""
-    if dt is None:
-        return None
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc)
-    return dt.replace(tzinfo=None)
+_naive_utc = naive_utc      # shared implementation (server/utils.py)
 
 
 @router.post("", response_model=TradeOut, status_code=201)

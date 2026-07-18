@@ -62,8 +62,18 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from strategies.common import ScaffoldMixin, atr_wilder, canonicalize_ohlc, wma
 
-class HullSuiteStrategy:
+
+class HullSuiteStrategy(ScaffoldMixin):
+    # shared scaffolding (strategies/common.py): _canonicalize with the
+    # historical options (reset_index + standard aliases), Wilder ATR, WMA;
+    # _close_trade/_finalize_open_trade/_next_trade_id/_bar_time/
+    # _build_trades_df come from ScaffoldMixin.
+    _canonicalize = staticmethod(canonicalize_ohlc)
+    _atr = staticmethod(atr_wilder)
+    _wma = staticmethod(wma)
+
     # ── exit reasons ─────────────────────────────────────────────────────────
     EXIT_TP      = "TP"
     EXIT_SL      = "SL"
@@ -199,20 +209,6 @@ class HullSuiteStrategy:
     # Hull variants + data prep (self-contained)
     # ─────────────────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _canonicalize(df: pd.DataFrame) -> pd.DataFrame:
-        out = df.copy().reset_index(drop=True)
-        low = {c.lower(): c for c in out.columns}
-        ren = {}
-        for canon in ("Open", "High", "Low", "Close"):
-            if canon not in out.columns and canon.lower() in low:
-                ren[low[canon.lower()]] = canon
-        if "Datetime" not in out.columns:
-            for alt in ("datetime", "date", "time", "timestamp"):
-                if alt in low:
-                    ren[low[alt]] = "Datetime"
-                    break
-        return out.rename(columns=ren) if ren else out
 
     def _source_series(self, df: pd.DataFrame, kind: str) -> pd.Series:
         O, H, L, C = (df["Open"].astype(float), df["High"].astype(float),
@@ -244,11 +240,6 @@ class HullSuiteStrategy:
     def _sqrtlen(self, x: int) -> int:
         return max(self._pine_round(math.sqrt(x)), 1)
 
-    @staticmethod
-    def _wma(series: pd.Series, length: int) -> pd.Series:
-        length = max(int(length), 1)
-        w = np.arange(1, length + 1)
-        return series.rolling(length).apply(lambda x: float(np.dot(x, w) / w.sum()), raw=True)
 
     @staticmethod
     def _ema(series: pd.Series, length: int) -> pd.Series:
@@ -267,12 +258,6 @@ class HullSuiteStrategy:
                 3 * self._wma(src, self._third(m)) - self._wma(src, self._half(m)) - self._wma(src, m), m)
         return pd.Series(np.nan, index=src.index)
 
-    @staticmethod
-    def _atr(df: pd.DataFrame, length: int) -> pd.Series:
-        h, l, c = df["High"].astype(float), df["Low"].astype(float), df["Close"].astype(float)
-        pc = c.shift(1)
-        tr = pd.concat([h - l, (h - pc).abs(), (l - pc).abs()], axis=1).max(axis=1)
-        return tr.ewm(alpha=1.0 / max(int(length), 1), adjust=False).mean()   # Wilder
 
     # ─────────────────────────────────────────────────────────────────────────
     # ATR exit
@@ -335,38 +320,14 @@ class HullSuiteStrategy:
             "exit_reason":    None,
         })
 
-    def _close_trade(self, i: int, exit_price: float, exit_reason: str) -> None:
-        t = self.trades[-1]
-        t.update({
-            "exit_time":   self._bar_time(i),
-            "exit_price":  float(exit_price),
-            "exit_bar":    i,
-            "bars_held":   i - t["entry_bar"],
-            "exit_reason": exit_reason,
-        })
-        self.position = 0
 
-    def _finalize_open_trade(self) -> None:
-        if self.position != 0 and self.trades:
-            last_i = len(self._df) - 1
-            self._close_trade(last_i, self._C[last_i], self.EXIT_MANUAL)
 
-    def _next_trade_id(self) -> str:
-        self.trade_counter += 1
-        return f"T{self.trade_counter:05d}"
 
-    def _bar_time(self, idx: int):
-        d = self._df
-        return d["Datetime"].iloc[idx] if "Datetime" in d.columns else idx
 
     # ─────────────────────────────────────────────────────────────────────────
     # Output builders
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _build_trades_df(self) -> pd.DataFrame:
-        if not self.trades:
-            return pd.DataFrame(columns=self.TRADE_COLUMNS)
-        return pd.DataFrame(self.trades)[self.TRADE_COLUMNS].copy()
 
     def _build_details(self) -> Dict:
         hull = self._hull_arr

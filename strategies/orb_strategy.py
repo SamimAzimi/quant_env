@@ -57,8 +57,17 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from strategies.common import ScaffoldMixin, canonicalize_ohlc
 
-class OpeningRangeBreakoutStrategy:
+
+class OpeningRangeBreakoutStrategy(ScaffoldMixin):
+    # shared scaffolding (strategies/common.py) with this strategy's
+    # historical options: NO index reset + Volume mapping; the trade
+    # bookkeeping methods come from ScaffoldMixin.
+    _canonicalize = staticmethod(lambda df: canonicalize_ohlc(
+        df, reset_index=False,
+        volume_aliases=("volume", "vol", "tick_volume", "tickvolume")))
+
     # ── exit reasons ─────────────────────────────────────────────────────────
     EXIT_TP       = "TP"
     EXIT_SL       = "SL"
@@ -226,25 +235,6 @@ class OpeningRangeBreakoutStrategy:
         hh, mm = str(s).split(":")[:2]
         return dtime(int(hh), int(mm))
 
-    @staticmethod
-    def _canonicalize(df: pd.DataFrame) -> pd.DataFrame:
-        out = df.copy()
-        low = {c.lower(): c for c in out.columns}
-        ren = {}
-        for canon in ("Open", "High", "Low", "Close"):
-            if canon not in out.columns and canon.lower() in low:
-                ren[low[canon.lower()]] = canon
-        if "Volume" not in out.columns:
-            for alt in ("volume", "vol", "tick_volume", "tickvolume"):
-                if alt in low:
-                    ren[low[alt]] = "Volume"
-                    break
-        if "Datetime" not in out.columns:
-            for alt in ("datetime", "date", "time", "timestamp"):
-                if alt in low:
-                    ren[low[alt]] = "Datetime"
-                    break
-        return out.rename(columns=ren) if ren else out
 
     def _volume(self, df: pd.DataFrame) -> Optional[pd.Series]:
         return df["Volume"].astype(float) if "Volume" in df.columns else None
@@ -520,37 +510,14 @@ class OpeningRangeBreakoutStrategy:
         rec.update(vinfo)
         self.trades.append(rec)
 
-    def _close_trade(self, i: int, exit_price: float, exit_reason: str) -> None:
-        t = self.trades[-1]
-        t.update({
-            "exit_time":   self._bar_time(i),
-            "exit_price":  float(exit_price),
-            "exit_bar":    i,
-            "bars_held":   i - t["entry_bar"],
-            "exit_reason": exit_reason,
-        })
-        self.position = 0
 
-    def _finalize_open_trade(self) -> None:
-        if self.position != 0 and self.trades:
-            last_i = len(self._df) - 1
-            self._close_trade(last_i, self._C[last_i], self.EXIT_MANUAL)
 
-    def _next_trade_id(self) -> str:
-        self.trade_counter += 1
-        return f"T{self.trade_counter:05d}"
 
-    def _bar_time(self, idx: int):
-        return self._df["Datetime"].iloc[idx] if "Datetime" in self._df.columns else idx
 
     # ─────────────────────────────────────────────────────────────────────────
     # Output builders
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _build_trades_df(self) -> pd.DataFrame:
-        if not self.trades:
-            return pd.DataFrame(columns=self.TRADE_COLUMNS)
-        return pd.DataFrame(self.trades)[self.TRADE_COLUMNS].copy()
 
     def _build_details(self) -> Dict:
         d = self._df

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ..dates import as_of_or_today, day_bounds, range_bounds
 from ..db import get_db
+from ..utils import naive_utc
 from ..models import EconReport, FearGreedReading, Thought, VixReading
 from ..schemas import (
     EconReportIn, EconReportOut, EconReportPatch,
@@ -26,11 +27,10 @@ def _now() -> datetime:
 
 
 def _naive_utc(dt: datetime | None) -> datetime:
+    # shared conversion (server/utils.py); this router defaults None → _now()
     if dt is None:
         return _now()
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc)
-    return dt.replace(tzinfo=None)
+    return naive_utc(dt)
 
 
 def _prev_day(db: Session, model, as_of: date | None):

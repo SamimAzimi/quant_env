@@ -16,7 +16,8 @@ import os
 from datetime import datetime, timezone
 
 from config.config import API_ID_SAMIM_UZ, API_HASH_SAMIM_UZ
-from libs.market_sessions import DEFAULT_SESSIONS as LIB_SESSIONS, utc_offset_hours
+from libs.market_sessions import (DEFAULT_SESSIONS as LIB_SESSIONS,
+                                  pretty_session as _pretty, utc_offset_hours)
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +41,6 @@ def _alert_chat() -> int | str | None:
         return int(raw)
     except ValueError:
         return raw
-
-
-def _pretty(name: str) -> str:
-    return "New York" if name == "NewYork" else name
 
 
 def format_session_message(session: str, event: str) -> str:
