@@ -11,24 +11,13 @@ from functools import lru_cache
 
 from fastapi import APIRouter, HTTPException, Query
 
-from .. import asset_stats, marketdata
+from .. import asset_stats
+from ..utils import guard_csv
 
 router = APIRouter(prefix="/api/asset-stats", tags=["asset-stats"])
 
 
-def _csv_path(asset: str, tf: str) -> str:
-    return os.path.join(str(marketdata.MARKET_DATA_DIR), asset, f"{tf}.csv")
-
-
-def _guard(asset: str, tf: str) -> str:
-    if tf not in marketdata.TIMEFRAMES:
-        raise HTTPException(422, f"Unknown timeframe {tf!r}; choose one of "
-                                 f"{marketdata.TIMEFRAMES}")
-    path = _csv_path(asset, tf)
-    if not os.path.exists(path):
-        raise HTTPException(404, f"No {tf} data for {asset}. Run "
-                                 f"libs/data_manager.py to download it.")
-    return path
+_guard = guard_csv          # shared implementation (server/utils.py)
 
 
 @router.get("/range")

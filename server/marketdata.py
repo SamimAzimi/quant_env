@@ -28,20 +28,13 @@ import pandas as pd
 
 from config.config import MARKET_DATA_DIR
 from libs.data_loader import load_csv
-from libs.market_sessions import DEFAULT_SESSIONS as LIB_SESSIONS, local_to_utc
+from libs.market_sessions import pretty_session as _pretty, session_utc_window
 
 CHART_ASSETS = ["NDX", "XAUUSD", "XAGUSD", "USDJPY", "EURUSD"]
 TIMEFRAMES = ["5m", "15m", "30m", "1h", "2h", "4h"]
 
 # The four majors shown as chart backgrounds and session key levels.
 MAJOR_SESSIONS = ("Sydney", "Tokyo", "London", "NewYork")
-_SESSIONS = {s.name: s for s in LIB_SESSIONS if s.name in MAJOR_SESSIONS}
-
-_PRETTY = {"NewYork": "New York"}
-
-
-def _pretty(name: str) -> str:
-    return _PRETTY.get(name, name)
 
 
 def available_assets() -> list[str]:
@@ -55,8 +48,13 @@ def available_assets() -> list[str]:
     )
 
 
-def _csv_path(asset: str, tf: str) -> str:
+def csv_path(asset: str, tf: str) -> str:
+    """THE path scheme for the CSV bar store: <MARKET_DATA_DIR>/<asset>/<tf>.csv.
+    Reads MARKET_DATA_DIR at call time so tests can monkeypatch it."""
     return os.path.join(str(MARKET_DATA_DIR), asset, f"{tf}.csv")
+
+
+_csv_path = csv_path        # internal alias kept for existing callers
 
 
 @lru_cache(maxsize=64)
@@ -77,16 +75,9 @@ def load_bars(asset: str, tf: str) -> pd.DataFrame:
 # DST-aware session windows (all naive-UTC, matching the CSV timestamps)
 # --------------------------------------------------------------------------
 
-def _session_utc(name: str, anchor: date) -> tuple[pd.Timestamp, pd.Timestamp]:
-    """One session's [open, close) as naive UTC for a local anchor date.
-
-    The session is defined in local wall-clock time, so converting each
-    anchor date separately applies that date's DST rules exactly.
-    """
-    s = _SESSIONS[name]
-    lo = local_to_utc(datetime.combine(anchor, s.open), s.tz)
-    hi = local_to_utc(datetime.combine(anchor, s.close), s.tz)
-    return lo.tz_localize(None), hi.tz_localize(None)
+# One shared implementation in libs/market_sessions.py — identical DST maths
+# for the server, the strategies, and the band study.
+_session_utc = session_utc_window
 
 
 def day_window(day: date) -> tuple[pd.Timestamp, pd.Timestamp]:

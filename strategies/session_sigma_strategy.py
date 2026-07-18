@@ -87,23 +87,20 @@ ledger (with ``sl_price``) the account simulator needs, and
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from functools import partial
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
-from libs.market_sessions import DEFAULT_SESSIONS as _LIB_SESSIONS, local_to_utc
+# The DST-correct session windows live in ONE place — libs/market_sessions.
+# Re-exported here (SEGMENT_CHAIN / SEGMENT_LABEL / segment_windows) so
+# existing imports from this module keep working.
+from libs.market_sessions import SEGMENT_CHAIN, SEGMENT_LABEL, segment_windows
+from strategies.common import build_trades_df, canonicalize_ohlc
 
-_SESS = {s.name: s for s in _LIB_SESSIONS}
-
-# (analyze, trigger) chain — the five-part day partition, in day order.
-SEGMENT_CHAIN = ["tokyo_solo", "tokyo_london", "london_solo", "london_ny", "ny_solo"]
-SEGMENT_LABEL = {
-    "tokyo_solo": "Tokyo (solo)", "tokyo_london": "Tokyo ∩ London",
-    "london_solo": "London (solo)", "london_ny": "London ∩ NY",
-    "ny_solo": "New York (solo)",
-}
+__all__ = ["SEGMENT_CHAIN", "SEGMENT_LABEL", "segment_windows",
+           "PAIR_PARAMS", "SessionSigmaStrategy"]
 
 # Per-pair calibration from the XAUUSD 5m band study (see module docstring).
 #   mean_cross      — only where the analyze σ is a trustworthy ruler for
@@ -130,27 +127,6 @@ PAIR_PARAMS: Dict[Tuple[str, str], Dict] = {
         mean_cross=True,  sl_k=0.60, breakout_k=2.0,
         breakout_tp_ks=(3.0, 3.5, 4.0)),
 }
-
-
-def _session_utc(name: str, day: date) -> Tuple[pd.Timestamp, pd.Timestamp]:
-    s = _SESS[name]
-    lo = local_to_utc(datetime.combine(day, s.open), s.tz)
-    hi = local_to_utc(datetime.combine(day, s.close), s.tz)
-    return lo.tz_localize(None), hi.tz_localize(None)
-
-
-def segment_windows(day: date) -> Dict[str, Tuple[pd.Timestamp, pd.Timestamp]]:
-    """The five-part partition of one trading day, naive-UTC, DST-correct."""
-    tk_o, tk_c = _session_utc("Tokyo", day)
-    ln_o, ln_c = _session_utc("London", day)
-    ny_o, ny_c = _session_utc("NewYork", day)
-    return {
-        "tokyo_solo":   (tk_o, ln_o),
-        "tokyo_london": (ln_o, tk_c),
-        "london_solo":  (tk_c, ny_o),
-        "london_ny":    (ny_o, ln_c),
-        "ny_solo":      (ln_c, ny_c),
-    }
 
 
 class SessionSigmaStrategy:
@@ -413,25 +389,14 @@ class SessionSigmaStrategy:
 
     # ── io helpers ─────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _canonicalize(df: pd.DataFrame) -> pd.DataFrame:
-        out = df.copy()
-        low = {c.lower(): c for c in out.columns}
-        ren = {}
-        for canon in ("Open", "High", "Low", "Close"):
-            if canon not in out.columns and canon.lower() in low:
-                ren[low[canon.lower()]] = canon
-        if "Datetime" not in out.columns:
-            for alt in ("datetime", "date", "time", "timestamp", "open time"):
-                if alt in low:
-                    ren[low[alt]] = "Datetime"
-                    break
-        return out.rename(columns=ren) if ren else out
+    # shared implementation (strategies/common.py) with this strategy's
+    # historical options: no index reset, "open time" accepted as time alias
+    _canonicalize = staticmethod(partial(
+        canonicalize_ohlc, reset_index=False,
+        time_aliases=("datetime", "date", "time", "timestamp", "open time")))
 
     def _build_trades_df(self) -> pd.DataFrame:
-        if not self.trades:
-            return pd.DataFrame(columns=self.TRADE_COLUMNS)
-        return pd.DataFrame(self.trades)[self.TRADE_COLUMNS].copy()
+        return build_trades_df(self.trades, self.TRADE_COLUMNS)
 
     def _build_details(self) -> Dict:
         return {

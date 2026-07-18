@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from ..dates import as_of_or_today, day_bounds, range_bounds
 from ..db import get_db
+from ..utils import naive_utc
 from ..models import Asset, News, NewsRelationship, Tag
 from ..schemas import (
     NewsGroupOut, NewsIn, NewsOut, NewsPatch, NewsThreadOut, NewsTreeOut,
@@ -24,11 +25,10 @@ router = APIRouter(prefix="/api/news", tags=["news"])
 
 
 def _naive_utc(dt: datetime | None) -> datetime:
+    # shared conversion (server/utils.py); this router defaults None → now
     if dt is None:
         return datetime.now(timezone.utc).replace(tzinfo=None)
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc)
-    return dt.replace(tzinfo=None)
+    return naive_utc(dt)
 
 
 # --- relationship helpers -------------------------------------------------

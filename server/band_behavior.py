@@ -40,7 +40,7 @@ import numpy as np
 from scipy import stats as sps
 
 from .marketdata import load_bars
-from strategies.session_sigma_strategy import SEGMENT_LABEL, segment_windows
+from libs.market_sessions import SEGMENT_LABEL, segment_windows
 
 K_STEP = 0.25
 K_MAX = 4.0

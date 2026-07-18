@@ -45,9 +45,16 @@ from typing import Dict, List, Optional, Tuple
 import pandas as pd
 
 from libs import indicators as ind
+from strategies.common import ScaffoldMixin, canonicalize_ohlc
 
 
-class MSBOBFibBacktester:
+class MSBOBFibBacktester(ScaffoldMixin):
+    # shared scaffolding (strategies/common.py): reset_index + standard
+    # aliases; _next_trade_id/_bar_time/_build_trades_df from ScaffoldMixin.
+    # _close_trade/_finalize_open_trade stay local (variant clears
+    # active_setup and skips bars_held).
+    _canonicalize = staticmethod(canonicalize_ohlc)
+
     # ── exit_reason vocabulary (same as CHOCHFibBacktester) ──────────────────
     EXIT_TP           = "TP"
     EXIT_SL           = "SL"
@@ -172,21 +179,6 @@ class MSBOBFibBacktester:
 
         self._finalize_open_trade()
 
-    @staticmethod
-    def _canonicalize(df: pd.DataFrame) -> pd.DataFrame:
-        """Reset index and map OHLC/time column names to the canonical casing."""
-        out = df.copy().reset_index(drop=True)
-        low = {c.lower(): c for c in out.columns}
-        ren = {}
-        for canon in ("Open", "High", "Low", "Close"):
-            if canon not in out.columns and canon.lower() in low:
-                ren[low[canon.lower()]] = canon
-        if "Datetime" not in out.columns:
-            for alt in ("datetime", "date", "time", "timestamp"):
-                if alt in low:
-                    ren[low[alt]] = "Datetime"
-                    break
-        return out.rename(columns=ren) if ren else out
 
     # ─────────────────────────────────────────────────────────────────────────
     # ZigZag — confirm alternating swing highs / lows causally
@@ -532,22 +524,12 @@ class MSBOBFibBacktester:
             "exit_reason":            self.EXIT_INVALIDATION,
         })
 
-    def _next_trade_id(self) -> str:
-        self.trade_counter += 1
-        return f"T{self.trade_counter:05d}"
 
-    def _bar_time(self, idx: int):
-        df = self._df
-        return df["Datetime"].iloc[idx] if "Datetime" in df.columns else idx
 
     # ─────────────────────────────────────────────────────────────────────────
     # Output builders
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _build_trades_df(self) -> pd.DataFrame:
-        if not self.trades:
-            return pd.DataFrame(columns=self.TRADE_COLUMNS)
-        return pd.DataFrame(self.trades)[self.TRADE_COLUMNS].copy()
 
     def _build_details(self) -> Dict:
         return {

@@ -30,7 +30,9 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from .asset_stats import BANDS, _Bars, _dist, _side_stats
+from .asset_stats import (  # noqa: F401 — available_range re-exported for the router
+    BANDS, _Bars, _dist, _side_stats, available_range,
+)
 from .marketdata import day_window, load_bars
 
 TRADING_DAYS = 252
@@ -261,16 +263,6 @@ def _character(df: pd.DataFrame, name: str) -> dict:
 # --------------------------------------------------------------------------
 # Public entry points
 # --------------------------------------------------------------------------
-
-def available_range(asset: str, tf: str) -> dict:
-    df = load_bars(asset, tf).dropna(subset=["Datetime"])
-    if df.empty:
-        raise ValueError(f"No {tf} data for {asset}")
-    d = df["Datetime"]
-    return {"start": d.iloc[0].date().isoformat(),
-            "end": d.iloc[-1].date().isoformat(),
-            "n_days": int(d.dt.date.nunique())}
-
 
 def analyze(asset: str, tf: str, start: date | None = None,
             end: date | None = None) -> dict:

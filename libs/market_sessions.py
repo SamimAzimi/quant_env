@@ -31,7 +31,7 @@ Series / DatetimeIndex / DataFrame where noted, and is importable:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Iterable, Sequence
 from zoneinfo import ZoneInfo
 
@@ -41,11 +41,13 @@ import pandas as pd
 UTC = timezone.utc
 
 __all__ = [
-    "Session", "DEFAULT_SESSIONS", "SESSION_PRIORITY",
+    "Session", "DEFAULT_SESSIONS", "SESSION_PRIORITY", "SESSION_BY_NAME",
     "ensure_utc", "make_naive", "utc_to_local", "local_to_utc",
     "active_sessions", "primary_session", "session_name", "label_sessions",
     "day_of_week", "month_of_year", "is_dst", "utc_offset_hours",
     "dst_transitions", "fx_market_is_open", "add_calendar_columns",
+    "pretty_session", "session_utc_window",
+    "SEGMENT_CHAIN", "SEGMENT_LABEL", "segment_windows",
 ]
 
 # --------------------------------------------------------------------------
@@ -361,6 +363,58 @@ def dst_transitions(tz: str, year: int) -> list[tuple[pd.Timestamp, float, float
         prev_t, prev_off = t, off
         t += step
     return res
+
+
+# --------------------------------------------------------------------------
+# Session UTC windows & the five-part trading-day partition
+# (the ONE shared implementation — server/marketdata.py and the strategies
+#  import from here, so every consumer applies identical DST-correct maths)
+# --------------------------------------------------------------------------
+
+SESSION_BY_NAME: dict[str, Session] = {s.name: s for s in DEFAULT_SESSIONS}
+
+# Display names for session keys ("NewYork" → "New York").
+PRETTY_SESSION = {"NewYork": "New York"}
+
+
+def pretty_session(name: str) -> str:
+    return PRETTY_SESSION.get(name, name)
+
+
+def session_utc_window(name: str, day: date) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """One session's [open, close) as naive UTC for a local anchor date.
+
+    The session is defined in local wall-clock time, so converting each
+    anchor date separately applies that date's DST rules exactly.
+    """
+    s = SESSION_BY_NAME[name]
+    lo = local_to_utc(datetime.combine(day, s.open), s.tz)
+    hi = local_to_utc(datetime.combine(day, s.close), s.tz)
+    return lo.tz_localize(None), hi.tz_localize(None)
+
+
+# The five-part partition of one trading day, in day order: each consecutive
+# pair is an (analyze, trigger) transition for the σ-band work.
+SEGMENT_CHAIN = ["tokyo_solo", "tokyo_london", "london_solo", "london_ny", "ny_solo"]
+SEGMENT_LABEL = {
+    "tokyo_solo": "Tokyo (solo)", "tokyo_london": "Tokyo ∩ London",
+    "london_solo": "London (solo)", "london_ny": "London ∩ NY",
+    "ny_solo": "New York (solo)",
+}
+
+
+def segment_windows(day: date) -> dict[str, tuple[pd.Timestamp, pd.Timestamp]]:
+    """The five-part partition of one trading day, naive-UTC, DST-correct."""
+    tk_o, tk_c = session_utc_window("Tokyo", day)
+    ln_o, ln_c = session_utc_window("London", day)
+    ny_o, ny_c = session_utc_window("NewYork", day)
+    return {
+        "tokyo_solo":   (tk_o, ln_o),
+        "tokyo_london": (ln_o, tk_c),
+        "london_solo":  (tk_c, ny_o),
+        "london_ny":    (ny_o, ln_c),
+        "ny_solo":      (ln_c, ny_c),
+    }
 
 
 def fx_market_is_open(ts) -> bool:

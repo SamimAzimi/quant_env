@@ -3,22 +3,19 @@ in the bell panel, sent to the Telegram alert chat when due, then deleted.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..db import get_db
+from ..utils import naive_utc
 from ..models import Alert
 from ..schemas import AlertIn, AlertOut, AlertPatch
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 
-def _naive_utc(dt: datetime) -> datetime:
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc)
-    return dt.replace(tzinfo=None)
+_naive_utc = naive_utc      # shared implementation (server/utils.py)
 
 
 @router.post("", response_model=AlertOut, status_code=201)

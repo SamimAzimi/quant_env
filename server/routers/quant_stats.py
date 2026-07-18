@@ -7,20 +7,13 @@ from functools import lru_cache
 
 from fastapi import APIRouter, HTTPException, Query
 
-from .. import marketdata, quant_stats
+from .. import quant_stats
+from ..utils import guard_csv
 
 router = APIRouter(prefix="/api/quant-stats", tags=["quant-stats"])
 
 
-def _guard(asset: str, tf: str) -> str:
-    if tf not in marketdata.TIMEFRAMES:
-        raise HTTPException(422, f"Unknown timeframe {tf!r}; choose one of "
-                                 f"{marketdata.TIMEFRAMES}")
-    path = os.path.join(str(marketdata.MARKET_DATA_DIR), asset, f"{tf}.csv")
-    if not os.path.exists(path):
-        raise HTTPException(404, f"No {tf} data for {asset}. Run "
-                                 f"libs/data_manager.py to download it.")
-    return path
+_guard = guard_csv          # shared implementation (server/utils.py)
 
 
 @router.get("/range")
