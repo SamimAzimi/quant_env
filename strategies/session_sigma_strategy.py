@@ -76,10 +76,23 @@ parameters from ``PAIR_PARAMS``, override via the constructor):
   the cross direction, TPs at μ±1/2/3σ, SL = sl_k·σ against the trade,
   breakeven after lot 2.
 
-Any lot still open when the trigger segment ends is flattened at its last
-close (``segment_close``). Exits are conservative: SL checked before TP on
-the same bar, and never on the entry bar itself. Everything is causal — the
-analyze stats are fully known before the trigger segment starts.
+REFERENCE MODE (``reference="london_solo"`` etc.): trade ONLY the chosen
+session's levels. Each occurrence of that session is the analyze window,
+and its trades run from the session's end until the NEXT occurrence of
+that same session (the following trading day; weekend/holiday days with
+no bars in the window are skipped, so a Friday reference trades through
+to Monday's occurrence). Both setups apply inside that whole window, with
+the reference's band-study pair calibration (NY solo, which has no
+studied following pair, defaults to breakout-only with the mildest
+parameters). ``reference=None`` (default) keeps the four-adjacent-pairs
+behaviour unchanged.
+
+Any lot still open when the trading window ends — the trigger segment, or
+in reference mode the last bar before the next reference occurrence — is
+flattened at its last close (``segment_close``). Exits are conservative:
+SL checked before TP on the same bar, and never on the entry bar itself.
+Everything is causal — the analyze stats are fully known before the
+trading window starts.
 
 Returns ``(trades_df, details)``; ``details["trades"]`` is the full per-lot
 ledger (with ``sl_price``) the account simulator needs, and
@@ -154,6 +167,12 @@ class SessionSigmaStrategy:
         # setup switches
         enable_mean_cross: bool = True,
         enable_breakout:   bool = True,
+        # REFERENCE MODE: pick ONE segment of SEGMENT_CHAIN (e.g.
+        # "london_solo") — only that session's μ/σ are traded, and its
+        # trading window runs from the session's end until the NEXT
+        # occurrence of that same session (next trading day). None keeps
+        # the default four-adjacent-pairs behaviour.
+        reference: Optional[str] = None,
         # per-pair overrides merged over PAIR_PARAMS, keyed (analyze, trigger)
         pair_params: Optional[Dict[Tuple[str, str], Dict]] = None,
         # gating / hygiene
@@ -168,6 +187,10 @@ class SessionSigmaStrategy:
         self.breakeven_after_lot = int(breakeven_after_lot)
         self.enable_mean_cross = enable_mean_cross
         self.enable_breakout = enable_breakout
+        if reference is not None and reference not in SEGMENT_CHAIN:
+            raise ValueError(f"reference must be one of {SEGMENT_CHAIN}, "
+                             f"got {reference!r}")
+        self.reference = reference
         self.pair_params = {k: dict(v) for k, v in PAIR_PARAMS.items()}
         for k, v in (pair_params or {}).items():
             self.pair_params.setdefault(k, {}).update(v)
@@ -201,11 +224,52 @@ class SessionSigmaStrategy:
         self._L = d["Low"].to_numpy(float)
         self._C = d["Close"].to_numpy(float)
 
+        if self.reference is not None:
+            self._run_reference(t)
+            return
         for day in sorted(set(t.date)):
             wins = segment_windows(day)
             idx = {k: self._slice(*wins[k]) for k in SEGMENT_CHAIN}
             for a_key, b_key in zip(SEGMENT_CHAIN[:-1], SEGMENT_CHAIN[1:]):
                 self._transition(day, a_key, b_key, idx[a_key], idx[b_key])
+
+    def _run_reference(self, t: pd.DatetimeIndex) -> None:
+        """Reference mode: each occurrence of the chosen session is the
+        analyze window; its trades run until the NEXT occurrence starts.
+
+        An 'occurrence' is a calendar day whose reference window actually
+        contains enough bars — weekend/holiday windows have none and are
+        skipped, so a Friday reference naturally trades through the weekend
+        gap until Monday's occurrence begins.
+        """
+        ref = self.reference
+        occ = []                              # (day, window_start, window_end)
+        for day in sorted(set(t.date)):
+            r0, r1 = segment_windows(day)[ref]
+            a0, a1 = self._slice(r0, r1)
+            if a1 - a0 >= self.min_bars_analyze:
+                occ.append((day, r0, r1))
+        pp = self._reference_params()
+        label = f"until next {SEGMENT_LABEL[ref]}"
+        for k, (day, r0, r1) in enumerate(occ):
+            a_rng = self._slice(r0, r1)
+            b0 = int(np.searchsorted(self._T, np.datetime64(r1), "left"))
+            b1 = (int(np.searchsorted(self._T, np.datetime64(occ[k + 1][1]), "left"))
+                  if k + 1 < len(occ) else len(self._T))
+            self._transition(day, ref, ref, a_rng, (b0, b1),
+                             pp=pp, trigger_label=label)
+
+    def _reference_params(self) -> Dict:
+        """Band-study calibration for the reference: its adjacent-pair entry
+        when one exists (the study measured those four), else the mildest
+        defaults (NY solo has no following segment in the study)."""
+        i = SEGMENT_CHAIN.index(self.reference)
+        if i + 1 < len(SEGMENT_CHAIN):
+            pp = self.pair_params.get((self.reference, SEGMENT_CHAIN[i + 1]))
+            if pp:
+                return pp
+        return dict(mean_cross=False, sl_k=0.60, breakout_k=2.0,
+                    breakout_tp_ks=(3.0, 3.5, 4.0))
 
     def _slice(self, lo: pd.Timestamp, hi: pd.Timestamp) -> Tuple[int, int]:
         if lo >= hi:
@@ -216,7 +280,9 @@ class SessionSigmaStrategy:
 
     # ── one transition ─────────────────────────────────────────────────────────
 
-    def _transition(self, day, a_key, b_key, a_rng, b_rng) -> None:
+    def _transition(self, day, a_key, b_key, a_rng, b_rng,
+                    pp: Optional[Dict] = None,
+                    trigger_label: Optional[str] = None) -> None:
         a0, a1 = a_rng
         b0, b1 = b_rng
         if a1 - a0 < self.min_bars_analyze or b1 - b0 < self.min_bars_trigger:
@@ -228,21 +294,25 @@ class SessionSigmaStrategy:
             return
         cA = float(closesA[-1])
         dev = (cA - mu) / sd
-        pp = self.pair_params.get((a_key, b_key), {})
+        if pp is None:
+            pp = self.pair_params.get((a_key, b_key), {})
+        a_label = SEGMENT_LABEL[a_key]
+        b_label = trigger_label or SEGMENT_LABEL[b_key]
 
-        seg_row = {"day": day, "analyze": a_key, "trigger": b_key,
+        seg_row = {"day": day, "analyze": a_key,
+                   "trigger": trigger_label or b_key,
                    "mu": mu, "sigma": sd, "close_dev": dev,
                    "setup": None, "breakouts": 0}
 
         if (self.enable_mean_cross and pp.get("mean_cross", False)
                 and abs(dev) < self.level_step):
             seg_row["setup"] = "mean_cross"
-            self._mean_cross(day, a_key, b_key, b0, b1, mu, sd, dev,
+            self._mean_cross(day, a_label, b_label, b0, b1, mu, sd, dev,
                              sl_k=float(pp.get("sl_k", 0.5)))
 
         if self.enable_breakout and pp:
             seg_row["breakouts"] = self._breakout(
-                day, a_key, b_key, b0, b1, mu, sd, dev,
+                day, a_label, b_label, b0, b1, mu, sd, dev,
                 k=float(pp.get("breakout_k", 2.0)),
                 tp_ks=tuple(pp.get("breakout_tp_ks", (3.0, 3.5, 4.0))),
                 sl_k=float(pp.get("sl_k", 0.5)))
@@ -250,7 +320,7 @@ class SessionSigmaStrategy:
 
     # ── setup 1: mean-cross momentum with 3-lot scale-out ─────────────────────
 
-    def _mean_cross(self, day, a_key, b_key, b0, b1, mu, sd, dev, sl_k) -> None:
+    def _mean_cross(self, day, a_label, b_label, b0, b1, mu, sd, dev, sl_k) -> None:
         short = dev > 0                       # closed above μ → cross plays down
         sgn = -1.0 if short else 1.0
         # find the first trigger bar whose RUNNING MEAN crosses μ
@@ -273,13 +343,13 @@ class SessionSigmaStrategy:
             tp = mu + sgn * tp_k * sd
             lots.append(self._new_trade(side, entry_i, entry, sl0, tp,
                                         setup="mean_cross", lot=n,
-                                        day=day, a_key=a_key, b_key=b_key,
+                                        day=day, a_label=a_label, b_label=b_label,
                                         mu=mu, sd=sd, dev=dev))
         self._manage(lots, short, entry, entry_i + 1, b1)
 
     # ── setup 2: breakout continuation beyond ±kσ ─────────────────────────────
 
-    def _breakout(self, day, a_key, b_key, b0, b1, mu, sd, dev,
+    def _breakout(self, day, a_label, b_label, b0, b1, mu, sd, dev,
                   k, tp_ks, sl_k) -> int:
         """First close beyond μ±kσ enters WITH the break, once per direction.
         Returns the number of breakout entries taken this transition."""
@@ -305,7 +375,7 @@ class SessionSigmaStrategy:
             for n, tp in enumerate(tps, start=1):
                 lots.append(self._new_trade(side, i, entry, sl0, float(tp),
                                             setup="breakout", lot=n,
-                                            day=day, a_key=a_key, b_key=b_key,
+                                            day=day, a_label=a_label, b_label=b_label,
                                             mu=mu, sd=sd, dev=dev, k_level=k))
             self._manage(lots, side == "short", entry, i + 1, b1)
             entries += 1
@@ -350,7 +420,7 @@ class SessionSigmaStrategy:
     # ── records ────────────────────────────────────────────────────────────────
 
     def _new_trade(self, side, bar_i, entry, sl, tp, *, setup, lot,
-                   day, a_key, b_key, mu, sd, dev, k_level=None) -> Dict:
+                   day, a_label, b_label, mu, sd, dev, k_level=None) -> Dict:
         rec = {
             "trade_id":    self._next_id(),
             "side":        side,
@@ -366,8 +436,8 @@ class SessionSigmaStrategy:
             "setup":       setup,
             "lot":         lot,
             "day":         day,
-            "analyze_segment": SEGMENT_LABEL[a_key],
-            "trigger_segment": SEGMENT_LABEL[b_key],
+            "analyze_segment": a_label,
+            "trigger_segment": b_label,
             "mu": mu, "sigma": sd, "close_dev": dev, "k_level": k_level,
             "entry_bar": bar_i,
             "exit_bar": None, "bars_held": None,
@@ -413,6 +483,7 @@ class SessionSigmaStrategy:
                 "breakeven_after_lot": self.breakeven_after_lot,
                 "enable_mean_cross": self.enable_mean_cross,
                 "enable_breakout": self.enable_breakout,
+                "reference": self.reference,
                 "pair_params": {f"{a}->{b}": {
                     kk: (list(vv) if isinstance(vv, tuple) else vv)
                     for kk, vv in p.items()}
