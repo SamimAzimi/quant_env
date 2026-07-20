@@ -186,6 +186,63 @@ def test_breakout_beyond_top_target_is_skipped():
                     & (full["analyze_segment"] == "Tokyo (solo)")).any()
 
 
+def test_reference_mode_trades_only_that_session_across_the_day():
+    # reference = Tokyo (solo): its μ/σ are the only ruler, and its trading
+    # window spans until the next Tokyo occurrence — so a breakout that
+    # happens hours later (here in the London∩NY window) still trades off
+    # Tokyo's levels, and no other analyze segment produces trades.
+    analyze = [1.0990, 1.1010] * 14                       # tokyo_solo, μ=1.1
+    a = _bars("2026-07-06 00:00", analyze)
+    flat1 = _bars("2026-07-06 07:00", [1.1000] * 20)      # quiet until 12:00
+    trig = [1.1005, 1.1015, 1.1022, 1.1028, 1.1033, 1.1038, 1.1043, 1.1043]
+    b = _bars("2026-07-06 12:00", trig)                   # breakout in Ldn∩NY
+    flat2 = _bars("2026-07-06 14:00", [1.1043] * 40)      # rest of day 1
+    day2 = _bars("2026-07-07 00:00", [1.1043] * 28)       # next occurrence
+    df = pd.concat([a, flat1, b, flat2, day2], ignore_index=True)
+
+    strat = SessionSigmaStrategy(reference="tokyo_solo", enable_mean_cross=False)
+    _, details = strat.backtest(df)
+    full = details["trades"]
+    assert len(full) > 0
+    assert set(full["analyze_segment"]) == {"Tokyo (solo)"}
+    assert set(full["trigger_segment"]) == {"until next Tokyo (solo)"}
+    bo = full[full["setup"] == "breakout"]
+    day1 = bo[bo["day"] == DAY]
+    assert len(day1) == 3
+    mu, sd = float(day1["mu"].iloc[0]), float(day1["sigma"].iloc[0])
+    assert mu == pytest.approx(1.1000, abs=1e-4)          # Tokyo's ruler
+    # entry happened long after the adjacent segment, inside London∩NY
+    assert day1["entry_time"].iloc[0] == pd.Timestamp("2026-07-06 12:30")
+    tps = sorted(day1["tp_price"])
+    assert tps == pytest.approx([mu + 3 * sd, mu + 3.5 * sd, mu + 4 * sd])
+    assert set(day1["exit_reason"]) == {"TP"}
+
+
+def test_reference_mode_flattens_before_next_occurrence():
+    # a breakout that never reaches a target stays open until the last bar
+    # before the next reference occurrence, then closes as segment_close
+    analyze = [1.0990, 1.1010] * 14
+    a = _bars("2026-07-06 00:00", analyze)
+    hold = _bars("2026-07-06 07:00", [1.1022] * 68)       # 07:00 → 23:45
+    day2 = _bars("2026-07-07 00:00", [1.1022] * 28)
+    df = pd.concat([a, hold, day2], ignore_index=True)
+
+    strat = SessionSigmaStrategy(reference="tokyo_solo", enable_mean_cross=False)
+    _, details = strat.backtest(df)
+    full = details["trades"]
+    day1 = full[(full["setup"] == "breakout") & (full["day"] == DAY)]
+    assert len(day1) == 3
+    assert set(day1["exit_reason"]) == {"segment_close"}
+    # held to the final bar of day 1 — well past every session boundary —
+    # and closed before day 2's Tokyo occurrence began
+    assert set(day1["exit_time"]) == {pd.Timestamp("2026-07-06 23:45")}
+
+
+def test_reference_mode_rejects_unknown_segment():
+    with pytest.raises(ValueError):
+        SessionSigmaStrategy(reference="sydney")
+
+
 def test_ledger_has_pipeline_columns_and_details():
     rng = np.random.default_rng(5)
     idx = pd.date_range("2026-07-06", periods=10 * 96, freq="15min")
