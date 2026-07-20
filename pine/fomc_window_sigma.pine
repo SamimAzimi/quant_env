@@ -1,0 +1,117 @@
+//@version=6
+// FOMC Window σ-Levels
+// ─────────────────────
+// Pick two DATES (e.g. one FOMC meeting day → the next). All bars between
+// them (dates inclusive, minutes ignored) define a distribution: the mean μ
+// and standard deviation σ of the chosen source. The script draws μ and the
+// ±1σ…±4σ levels (step configurable down to 0.25σ) from the window start and
+// EXTENDS them to the right edge of the chart, so everything after the
+// second date can be read against the between-meetings ruler — exactly the
+// "what did this FOMC period anchor, and how did price leave it" view.
+//
+// Levels are drawing objects (lines/labels), so the 64-plot limit never
+// applies. While the window is still in progress the levels update bar by
+// bar; once the end date has passed they are frozen (non-repainting).
+//
+// FOMC meeting dates for reference (second day of each meeting):
+//   2025: Jan 29, Mar 19, May 7, Jun 18, Jul 30, Sep 17, Oct 29, Dec 10
+//   2026: Jan 28, Mar 18, Apr 29, Jun 17, Jul 29, Sep 16, Oct 28, Dec 9
+indicator("FOMC Window σ-Levels", overlay = true,
+     max_lines_count = 100, max_labels_count = 100)
+
+// ── inputs ────────────────────────────────────────────────────────────────
+startT  = input.time(timestamp("28 Jan 2026 00:00 +0000"), "Window start (FOMC date)",
+     confirm = true, tooltip = "Only the DATE matters; the whole day is included.")
+endT    = input.time(timestamp("18 Mar 2026 00:00 +0000"), "Window end (next FOMC date)",
+     confirm = true, tooltip = "Inclusive. Levels freeze after this day and extend right.")
+src     = input.source(close, "Source")
+sigStep = input.float(1.0,  "σ step",     minval = 0.25, maxval = 2.0, step = 0.25)
+sigMax  = input.float(4.0,  "σ maximum",  minval = 1.0,  maxval = 6.0, step = 0.5)
+showBg  = input.bool(true,  "Shade the window")
+showLbl = input.bool(true,  "Labels at the right edge")
+
+colUp   = input.color(color.new(color.teal,   0), "Above-mean bands", group = "Style")
+colDn   = input.color(color.new(color.red,    0), "Below-mean bands", group = "Style")
+colMu   = input.color(color.new(color.orange, 0), "Mean",             group = "Style")
+
+// ── accumulate the window's distribution (date precision) ─────────────────
+DAY_MS = 86400000
+inWin  = time >= startT and time < endT + DAY_MS
+
+var float sum   = 0.0
+var float sumSq = 0.0
+var int   n     = 0
+var int   startBar = na
+
+if inWin
+    if na(startBar)
+        startBar := bar_index
+    sum   += src
+    sumSq += src * src
+    n     += 1
+
+bgcolor(showBg and inWin ? color.new(colMu, 88) : na)
+
+mu = n > 1 ? sum / n : na
+sd = n > 1 ? math.sqrt(math.max((sumSq - sum * sum / n) / (n - 1), 0.0)) : na
+
+// ── level book-keeping ────────────────────────────────────────────────────
+nLevels = 2 * math.round(sigMax / sigStep) + 1        // −max…−step, μ, +step…+max
+
+var array<line>  lines  = array.new<line>()
+var array<label> labels = array.new<label>()
+
+kOf(i) =>                                             // i = 0..nLevels-1 → σ multiple
+    half = math.round(sigMax / sigStep)
+    (i - half) * sigStep
+
+styleOf(k) =>
+    k == 0 ? line.style_solid : (k % 1 == 0 ? line.style_solid : line.style_dashed)
+
+colorOf(k) =>
+    k == 0 ? colMu : k > 0 ? color.new(colUp, math.min(60, 15 * int(math.abs(k)))) :
+     color.new(colDn, math.min(60, 15 * int(math.abs(k))))
+
+txtOf(k) =>
+    k == 0 ? "μ" : (k > 0 ? "+" : "−") + str.tostring(math.abs(k),
+     math.abs(k) % 1 == 0 ? "#" : "#.##") + "σ"
+
+// create once when the window has produced stats
+if barstate.isconfirmed and not na(mu) and not na(sd) and array.size(lines) == 0
+    for i = 0 to nLevels - 1
+        k = kOf(i)
+        y = mu + k * sd
+        array.push(lines, line.new(startBar, y, bar_index, y,
+             extend = extend.right, color = colorOf(k),
+             style = styleOf(k), width = k == 0 ? 2 : 1))
+        if showLbl
+            array.push(labels, label.new(bar_index, y, txtOf(k),
+                 style = label.style_label_left, textcolor = colorOf(k),
+                 color = color.new(color.black, 100), size = size.small))
+
+// while the window is still open, the ruler refines with each new bar;
+// after endT it is frozen. Labels ride the right edge either way.
+if array.size(lines) > 0
+    for i = 0 to nLevels - 1
+        k = kOf(i)
+        y = mu + k * sd
+        ln = array.get(lines, i)
+        if inWin
+            line.set_y1(ln, y)
+            line.set_y2(ln, y)
+        if showLbl and array.size(labels) > i
+            lb = array.get(labels, i)
+            label.set_x(lb, bar_index)
+            if inWin
+                label.set_y(lb, y)
+
+// ── info box ──────────────────────────────────────────────────────────────
+var table info = table.new(position.top_right, 1, 3, border_width = 1)
+if barstate.islast and not na(mu)
+    table.cell(info, 0, 0, "FOMC window ruler", text_color = colMu, text_size = size.small)
+    table.cell(info, 0, 1, "μ  " + str.tostring(mu, format.mintick) +
+         "   σ  " + str.tostring(sd, format.mintick), text_color = color.gray,
+         text_size = size.small)
+    table.cell(info, 0, 2, str.tostring(n) + " bars in window" +
+         (inWin ? "  (still forming)" : "  (frozen)"),
+         text_color = color.gray, text_size = size.small)
