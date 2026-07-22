@@ -133,9 +133,14 @@ too.
     occupancy vs the normal expectation, Wald–Wolfowitz runs tests
     (above/below μ, outer-band hits; Stouffer-combined across days),
     Mann–Whitney U (inner vs outer first-touch times and escape speeds);
-    **G** a synthesis verdict (structured / mixed / noise-like). The study
-    can be **saved** (`saved_reports` table) for later or **copied as JSON**
-    for another AI prompt; saved studies reload from the page.
+    **G** a synthesis verdict (structured / mixed / noise-like). Beyond the
+    four adjacent-chain pairs, the study also reports seven extra
+    reference→New-York pairs (`EXTRA_PAIRS`): Tokyo (solo), Tokyo ∩ London
+    and London (solo) each measured against **New York (solo)** and against
+    **New York (full)** — the whole NY session, open → close — plus **New
+    York (solo) previous day → next day** (day-over-day). The study can be
+    **saved** (`saved_reports` table) for later or **copied as JSON** for
+    another AI prompt; saved studies reload from the page.
 - **Strategies** — browse backtest runs persisted by the pipeline. Every
   `run_pipeline(...)` saves into the app database (the legacy
   sqlite/parquet ResultStore and its Streamlit dashboard are removed; the

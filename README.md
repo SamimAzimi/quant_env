@@ -52,11 +52,11 @@ Run a backtest through the pipeline (strategy is injected):
 
 ```python
 from libs.pipeline import PipelineConfig, run_pipeline
-from strategies.hull_strategy_suit import HullSuiteStrategy
+from strategies.session_sigma_strategy import SessionSigmaStrategy
 
-res = run_pipeline(PipelineConfig(asset="NDX", asset_class="I", timeframe="1h",
-                                  cost_symbol="NAS100",
-                                  strategy_cls=HullSuiteStrategy))
+res = run_pipeline(PipelineConfig(asset="XAUUSD", asset_class="Commodities",
+                                  timeframe="5m", cost_symbol="XAUUSD",
+                                  strategy_cls=SessionSigmaStrategy))
 res.metrics
 ```
 
