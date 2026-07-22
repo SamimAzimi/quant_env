@@ -10,24 +10,25 @@ The strategy is injected, so the engine stays independent of any specific
 strategy module:
 
     from libs.pipeline import PipelineConfig, run_pipeline, run_many
-    from strategies.hull_strategy_suit import HullSuiteStrategy
+    from strategies.session_sigma_strategy import SessionSigmaStrategy
 
-    res = run_pipeline(PipelineConfig(asset="NDX", asset_class="I", timeframe="1h",
-                                      strategy_cls=HullSuiteStrategy))
+    res = run_pipeline(PipelineConfig(asset="XAUUSD", asset_class="Commodities",
+                                      timeframe="5m", strategy_cls=SessionSigmaStrategy))
     res.metrics                      # flat dict of every KPI
     res.report["exit_reasons"]       # pie-ready frame, etc.
 
-    # or batch several assets into one store, then compare:
+    # or batch several configs into one store, then compare:
     results = run_many([
-        PipelineConfig(asset="NDX",    asset_class="I",  cost_symbol="NAS100"),
-        PipelineConfig(asset="SPX500", asset_class="I"),
-        PipelineConfig(asset="XAUUSD", asset_class="C", use_risk_sizing=True),
+        PipelineConfig(asset="XAUUSD", asset_class="Commodities", timeframe="5m",
+                       strategy_cls=SessionSigmaStrategy, run_id="sigma_xau"),
+        PipelineConfig(asset="XAUUSD", asset_class="Commodities", timeframe="5m",
+                       strategy_cls=SessionExtremeFadeStrategy, run_id="fade_xau"),
     ])
 
 The strategy class must expose
 ``backtest(df) -> (trades_df, details)`` and accept
 ``run_id``, ``timeframe``, ``asset_class`` plus its own params as kwargs.
-When ``strategy_cls`` is omitted, HullSuiteStrategy is used.
+When ``strategy_cls`` is omitted, SessionSigmaStrategy is used.
 """
 from __future__ import annotations
 import sys
@@ -53,8 +54,8 @@ from libs.performance import PerformanceAnalytics
 
 def _default_strategy_cls():
     # imported lazily so the engine has no hard dependency on strategies/
-    from strategies.hull_strategy_suit import HullSuiteStrategy
-    return HullSuiteStrategy
+    from strategies.session_sigma_strategy import SessionSigmaStrategy
+    return SessionSigmaStrategy
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -83,7 +84,7 @@ class PipelineConfig:
     periods_per_year: int = 252
 
     # ── strategy ─────────────────────────────────────────────────────────────
-    strategy_cls: Optional[type] = None          # default: HullSuiteStrategy
+    strategy_cls: Optional[type] = None          # default: SessionSigmaStrategy
     strategy_params: Dict[str, Any] = field(default_factory=dict)
     atr_length: int = 14
 
@@ -112,7 +113,7 @@ class PipelineConfig:
     def metadata(self) -> Dict[str, Any]:
         """Run config worth persisting alongside the results."""
         return {
-            "strategy": self.strategy_cls.__name__ if self.strategy_cls else "HullSuiteStrategy",
+            "strategy": self.strategy_cls.__name__ if self.strategy_cls else "SessionSigmaStrategy",
             "asset_class": self.asset_class,
             "timeframe": self.timeframe,
             "cost_symbol": self.cost_symbol,
@@ -264,8 +265,8 @@ def run_many(
 # Example usage (guard so importing the module does nothing)
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    res = run_pipeline(PipelineConfig(asset="NDX", asset_class="I", timeframe="1h",
-                                      cost_symbol="NAS100"))
+    res = run_pipeline(PipelineConfig(asset="XAUUSD", asset_class="Commodities",
+                                      timeframe="5m", cost_symbol="XAUUSD"))
     print("cost summary:", res.cost_summary)
     print("net profit  :", res.metrics["net_profit"], "| sharpe:", res.metrics["sharpe"])
 

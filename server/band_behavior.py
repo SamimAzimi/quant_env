@@ -3,7 +3,10 @@ volatility bands in the next session — and which parts beat noise.
 
 For each consecutive session pair (S_t → S_{t+1}) of the five-part day
 partition (Tokyo solo → Tokyo∩London → London solo → London∩NY → NY solo,
-DST-correct), per day:
+DST-correct), plus the extra reference→New-York pairs (Tokyo solo,
+Tokyo∩London, London solo each vs New York solo and full New York
+open→close, and New-York-solo previous day → next day; see EXTRA_PAIRS),
+per day:
 
   μ_t, σ_t   mean / std of ALL candle closes inside S_t (price levels)
   z          (close − μ_t) / σ_t for every S_{t+1} candle close
@@ -49,6 +52,44 @@ N_BANDS = N_EDGE + 2                       # + two open tails
 PAIRS = list(zip(["tokyo_solo", "tokyo_london", "london_solo", "london_ny"],
                  ["tokyo_london", "london_solo", "london_ny", "ny_solo"]))
 SURV_MAX = 60                              # survival curve horizon (candles)
+
+# ── extra reference → New-York pairs (added; the adjacent PAIRS above are
+# left unchanged) ───────────────────────────────────────────────────────────
+# Study three earlier references against the New York session:
+#   • New York (solo)  — ny_solo window
+#   • New York (full)  — the whole NY session, open → close
+# plus New-York-solo carried day-over-day (previous day → next day). All
+# windows are naive-UTC and DST-correct via segment_windows. Each builder
+# takes (day, prev_day) and returns (lo, hi) — or None when unavailable
+# (the cross-day analyze on the first day).
+NY_SOLO_LABEL = SEGMENT_LABEL["ny_solo"]              # "New York (solo)"
+NY_FULL_LABEL = "New York (full)"                     # NY open → NY close
+
+
+def _seg_win(key):
+    return lambda day, prev: segment_windows(day)[key]
+
+
+def _ny_full_win(day, prev):
+    w = segment_windows(day)
+    return (w["london_ny"][0], w["ny_solo"][1])       # NY open → NY close
+
+
+def _prev_ny_solo_win(day, prev):
+    return segment_windows(prev)["ny_solo"] if prev is not None else None
+
+
+# (analyze_label, trigger_label, analyze_window(day, prev), trigger_window(day, prev))
+EXTRA_PAIRS = [
+    (SEGMENT_LABEL["tokyo_solo"],   NY_SOLO_LABEL, _seg_win("tokyo_solo"),   _seg_win("ny_solo")),
+    (SEGMENT_LABEL["tokyo_solo"],   NY_FULL_LABEL, _seg_win("tokyo_solo"),   _ny_full_win),
+    (SEGMENT_LABEL["tokyo_london"], NY_SOLO_LABEL, _seg_win("tokyo_london"), _seg_win("ny_solo")),
+    (SEGMENT_LABEL["tokyo_london"], NY_FULL_LABEL, _seg_win("tokyo_london"), _ny_full_win),
+    (SEGMENT_LABEL["london_solo"],  NY_SOLO_LABEL, _seg_win("london_solo"),  _seg_win("ny_solo")),
+    (SEGMENT_LABEL["london_solo"],  NY_FULL_LABEL, _seg_win("london_solo"),  _ny_full_win),
+    (NY_SOLO_LABEL + " (prev day)", NY_SOLO_LABEL + " (next day)",
+     _prev_ny_solo_win, _seg_win("ny_solo")),
+]
 
 
 def band_labels() -> list[str]:
@@ -341,6 +382,33 @@ def _study_pair(day_zs: list[np.ndarray]) -> dict:
 # entry point
 # ──────────────────────────────────────────────────────────────────────────
 
+def _collect_extra(T: np.ndarray, C: np.ndarray, days: list) -> list[list[np.ndarray]]:
+    """Per-day z-arrays for each EXTRA_PAIRS entry — the same μ/σ-ruler logic
+    as the adjacent-pair loop, but with custom (possibly cross-day) windows."""
+    zs: list[list[np.ndarray]] = [[] for _ in EXTRA_PAIRS]
+    prev = None
+    for day in days:
+        for k, (_a, _b, awin, twin) in enumerate(EXTRA_PAIRS):
+            aw = awin(day, prev)
+            tw = twin(day, prev)
+            if aw is None or tw is None:
+                continue
+            a0 = int(np.searchsorted(T, np.datetime64(aw[0]), "left"))
+            a1 = int(np.searchsorted(T, np.datetime64(aw[1]), "left"))
+            b0 = int(np.searchsorted(T, np.datetime64(tw[0]), "left"))
+            b1 = int(np.searchsorted(T, np.datetime64(tw[1]), "left"))
+            if a1 - a0 < 5 or b1 - b0 < 3:
+                continue
+            closesA = C[a0:a1]
+            mu = float(np.mean(closesA))
+            sd = float(np.std(closesA, ddof=1))
+            if not np.isfinite(sd) or sd <= 0:
+                continue
+            zs[k].append((C[b0:b1] - mu) / sd)
+        prev = day
+    return zs
+
+
 def analyze_bands(asset: str, tf: str, start: date | None = None,
                   end: date | None = None) -> dict:
     df = load_bars(asset, tf).dropna(subset=["Datetime"]).sort_values("Datetime")
@@ -376,6 +444,15 @@ def analyze_bands(asset: str, tf: str, start: date | None = None,
     pairs_out = []
     for (a_key, b_key), zs in pair_zs.items():
         entry = {"analyze": SEGMENT_LABEL[a_key], "trigger": SEGMENT_LABEL[b_key]}
+        if len(zs) < 20:
+            entry["note"] = f"only {len(zs)} usable days — need ≥ 20"
+        else:
+            entry.update(_study_pair(zs))
+        pairs_out.append(entry)
+
+    # extra reference → New-York pairs (appended after the adjacent chain)
+    for (a_label, b_label, _aw, _tw), zs in zip(EXTRA_PAIRS, _collect_extra(T, C, days)):
+        entry = {"analyze": a_label, "trigger": b_label}
         if len(zs) < 20:
             entry["note"] = f"only {len(zs)} usable days — need ≥ 20"
         else:

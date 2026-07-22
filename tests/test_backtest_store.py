@@ -173,7 +173,14 @@ def test_band_study_structure():
                            return_value=_synthetic_bars()):
         r = band_behavior.analyze_bands("T", "15m")
     assert len(r["band_labels"]) == 34
-    assert len(r["pairs"]) == 4
+    # four adjacent-chain pairs + seven extra reference→New-York pairs
+    assert len(r["pairs"]) == 11
+    labels = {(p["analyze"], p["trigger"]) for p in r["pairs"]}
+    assert ("Tokyo (solo)", "New York (solo)") in labels
+    assert ("Tokyo (solo)", "New York (full)") in labels
+    assert ("Tokyo ∩ London", "New York (solo)") in labels
+    assert ("London (solo)", "New York (full)") in labels
+    assert ("New York (solo) (prev day)", "New York (solo) (next day)") in labels
     p = r["pairs"][0]
     assert abs(sum(p["A"]["probs"]) - 1) < 1e-6
     assert abs(sum(p["A"]["expected_probs"]) - 1) < 1e-6
